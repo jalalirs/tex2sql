@@ -4,11 +4,13 @@ from typing import Dict, Any
 import logging
 import os
 
-from app.dependencies import get_db
+from app.dependencies import get_db, get_current_user_optional, get_current_active_user
 from app.core.database import check_database_health
 from app.core.sse_manager import sse_manager
 from app.services.event_service import event_service
 from app.services.vanna_service import vanna_service
+from app.services.connection_service import connection_service
+from app.models.database import User
 from app.config import settings
 
 router = APIRouter(prefix="/health", tags=["Health"])
@@ -24,7 +26,10 @@ async def health_check():
     }
 
 @router.get("/detailed")
-async def detailed_health_check(db: AsyncSession = Depends(get_db)):
+async def detailed_health_check(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user_optional)
+):
     """Detailed health check with component status"""
     health_status = {
         "overall_status": "healthy",
@@ -36,6 +41,14 @@ async def detailed_health_check(db: AsyncSession = Depends(get_db)):
     try:
         from datetime import datetime
         health_status["timestamp"] = datetime.utcnow().isoformat()
+        
+        # Add user context if authenticated
+        if current_user:
+            health_status["user_context"] = {
+                "user_id": str(current_user.id),
+                "user_email": current_user.email,
+                "user_role": current_user.role
+            }
         
         # Database health
         db_healthy = await check_database_health()
@@ -71,6 +84,32 @@ async def detailed_health_check(db: AsyncSession = Depends(get_db)):
             "message": "LLM configuration is valid" if settings.OPENAI_API_KEY else "OpenAI API key not configured"
         }
         
+        # Authentication system health (if user management is enabled)
+        auth_status = "healthy"
+        auth_message = "Authentication system operational"
+        
+        try:
+            # Test authentication system
+            if current_user:
+                # User is authenticated, auth system working
+                pass
+            else:
+                # Check if auth is properly configured
+                if not settings.SECRET_KEY or settings.SECRET_KEY == "your-secret-key-change-in-production":
+                    auth_status = "warning"
+                    auth_message = "Default secret key in use - change in production"
+        except Exception as e:
+            auth_status = "unhealthy"
+            auth_message = f"Authentication system error: {str(e)}"
+        
+        health_status["components"]["authentication"] = {
+            "status": auth_status,
+            "message": auth_message,
+            "user_registration_enabled": settings.ENABLE_USER_REGISTRATION,
+            "email_verification_enabled": settings.ENABLE_EMAIL_VERIFICATION,
+            "password_reset_enabled": settings.ENABLE_PASSWORD_RESET
+        }
+        
         # File System Health
         data_dir_exists = os.path.exists(settings.DATA_DIR)
         upload_dir_exists = os.path.exists(settings.UPLOAD_DIR)
@@ -94,13 +133,17 @@ async def detailed_health_check(db: AsyncSession = Depends(get_db)):
             "debug_mode": settings.DEBUG,
             "max_upload_size": settings.MAX_UPLOAD_SIZE,
             "sse_heartbeat_interval": settings.SSE_HEARTBEAT_INTERVAL,
-            "sse_connection_timeout": settings.SSE_CONNECTION_TIMEOUT
+            "sse_connection_timeout": settings.SSE_CONNECTION_TIMEOUT,
+            "enable_analytics": settings.ENABLE_ANALYTICS,
+            "development_mode": settings.DEVELOPMENT_MODE
         }
         
         # Overall status determination
         component_statuses = [comp["status"] for comp in health_status["components"].values()]
         if "unhealthy" in component_statuses:
             health_status["overall_status"] = "degraded"
+        elif "warning" in component_statuses:
+            health_status["overall_status"] = "warning"
         
         return health_status
         
@@ -156,29 +199,30 @@ async def sse_health():
         }
 
 @router.get("/connections/{connection_id}/vanna")
-async def vanna_health_check(connection_id: str, db: AsyncSession = Depends(get_db)):
-    """Health check for a specific Vanna instance"""
+async def vanna_health_check(
+    connection_id: str, 
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Health check for a specific Vanna instance (user must own the connection)"""
     try:
+        # Verify user owns the connection
+        connection = await connection_service.get_user_connection(db, str(current_user.id), connection_id)
+        if not connection:
+            raise HTTPException(
+                status_code=404, 
+                detail="Connection not found or access denied"
+            )
+        
         # Get Vanna statistics
         vanna_stats = vanna_service.get_vanna_statistics(connection_id)
-        
-        # Get connection from database
-        from sqlalchemy import select
-        from app.models.database import Connection
-        import uuid
-        
-        stmt = select(Connection).where(Connection.id == uuid.UUID(connection_id))
-        result = await db.execute(stmt)
-        connection = result.scalar_one_or_none()
-        
-        if not connection:
-            raise HTTPException(status_code=404, detail="Connection not found")
         
         health_info = {
             "connection_id": connection_id,
             "connection_name": connection.name,
             "connection_status": connection.status.value,
             "is_trained": connection.status.value == "trained",
+            "user_id": str(current_user.id),
             "vanna_statistics": vanna_stats
         }
         
@@ -193,15 +237,19 @@ async def vanna_health_check(connection_id: str, db: AsyncSession = Depends(get_
                     model=settings.OPENAI_MODEL
                 )
                 
-                db_config = DatabaseConfig(
-                    server=connection.server,
-                    database_name=connection.database_name,
-                    username=connection.username,
-                    password=connection.password,
-                    table_name=connection.table_name,
-                    driver=connection.driver if hasattr(connection, 'driver') else None
-                )
+                # Get full connection details for Vanna
+                full_connection = await connection_service.get_connection_by_id(db, connection_id)
+                if not full_connection:
+                    raise ValueError("Could not retrieve full connection details")
                 
+                db_config = DatabaseConfig(
+                    server=full_connection.server,
+                    database_name=full_connection.database_name,
+                    username=full_connection.username,
+                    password=full_connection.password,
+                    table_name=full_connection.table_name,
+                    driver=full_connection.driver
+                )
                 
                 vanna_instance = vanna_service.get_vanna_instance(
                     connection_id, db_config, vanna_config
@@ -235,7 +283,7 @@ async def vanna_health_check(connection_id: str, db: AsyncSession = Depends(get_
         }
 
 @router.get("/system")
-async def system_health():
+async def system_health(current_user: User = Depends(get_current_user_optional)):
     """System-level health information"""
     try:
         import psutil
@@ -272,6 +320,13 @@ async def system_health():
             }
         }
         
+        # Add user context if authenticated
+        if current_user:
+            system_info["user_context"] = {
+                "user_id": str(current_user.id),
+                "user_role": current_user.role
+            }
+        
         # Determine health status based on resource usage
         if (cpu_percent > 90 or 
             memory.percent > 90 or 
@@ -305,38 +360,54 @@ async def system_health():
         }
 
 @router.post("/test/sse/{task_id}")
-async def test_sse_functionality(task_id: str):
+async def test_sse_functionality(
+    task_id: str,
+    current_user: User = Depends(get_current_user_optional)
+):
     """Test SSE functionality with a specific task ID"""
     try:
         import asyncio
         
+        # Include user context in test events if available
+        base_event_data = {"task_id": task_id}
+        if current_user:
+            base_event_data.update({
+                "user_id": str(current_user.id),
+                "user_email": current_user.email
+            })
+        
         # Send test events
         await sse_manager.send_to_task(task_id, "test_started", {
-            "message": "SSE test started",
-            "task_id": task_id
+            **base_event_data,
+            "message": "SSE test started"
         })
         
         # Send progress events
         for i in range(5):
             await asyncio.sleep(0.5)
             await sse_manager.send_to_task(task_id, "test_progress", {
+                **base_event_data,
                 "message": f"Test progress {i+1}/5",
-                "progress": (i+1) * 20,
-                "task_id": task_id
+                "progress": (i+1) * 20
             })
         
         await sse_manager.send_to_task(task_id, "test_completed", {
+            **base_event_data,
             "message": "SSE test completed successfully",
-            "task_id": task_id,
             "success": True
         })
         
-        return {
+        response = {
             "status": "success",
             "message": f"Test events sent to task {task_id}",
             "task_id": task_id,
             "stream_url": f"/events/stream/{task_id}"
         }
+        
+        if current_user:
+            response["user_id"] = str(current_user.id)
+        
+        return response
         
     except Exception as e:
         logger.error(f"SSE test failed: {e}")

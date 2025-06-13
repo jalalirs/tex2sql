@@ -10,7 +10,7 @@ from sqlalchemy import select, delete
 from datetime import datetime
 import logging
 
-from app.models.database import Connection, ColumnDescription, TrainingExample, TrainingTask, ConnectionStatus
+from app.models.database import Connection, ColumnDescription, TrainingExample, TrainingTask, ConnectionStatus, User
 from app.models.schemas import ConnectionCreate, ConnectionResponse, ConnectionTestResult, ColumnDescriptionItem, TrainingDataView
 from app.models.vanna_models import DatabaseConfig, ColumnInfo
 from app.core.sse_manager import sse_manager
@@ -223,19 +223,42 @@ class ConnectionService:
             await sse_logger.warning(f"Could not retrieve sample data: {str(e)}")
             return []
     
-    async def create_connection(self, db: AsyncSession, connection_data: ConnectionCreate, 
-                             column_descriptions: Optional[List[ColumnDescriptionItem]] = None) -> ConnectionResponse:
-        """Create a new connection"""
+    # ========================
+    # USER-SPECIFIC CONNECTION METHODS (UPDATED)
+    # ========================
+    
+    async def get_user_connection_by_name(self, db: AsyncSession, user_id: str, name: str) -> Optional[Connection]:
+        """Check if user already has a connection with this name"""
         try:
-            # Create connection record
+            stmt = select(Connection).where(
+                Connection.user_id == user_id,
+                Connection.name == name
+            )
+            result = await db.execute(stmt)
+            return result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(f"Failed to check connection name for user {user_id}: {e}")
+            return None
+    
+    async def create_connection_for_user(
+        self, 
+        db: AsyncSession, 
+        user: User,
+        connection_data: ConnectionCreate, 
+        column_descriptions: Optional[List[ColumnDescriptionItem]] = None
+    ) -> ConnectionResponse:
+        """Create a new connection for a specific user"""
+        try:
+            # Create connection record with user_id
             connection = Connection(
+                user_id=user.id,  # Associate with user
                 name=connection_data.name,
                 server=connection_data.server,
                 database_name=connection_data.database_name,
                 username=connection_data.username,
                 password=connection_data.password,  # TODO: Encrypt in production
                 table_name=connection_data.table_name,
-                driver=getattr(connection_data, 'driver', None),  # Include optional driver
+                driver=getattr(connection_data, 'driver', None),
                 status=ConnectionStatus.TEST_SUCCESS,
                 column_descriptions_uploaded=bool(column_descriptions)
             )
@@ -251,12 +274,13 @@ class ConnectionService:
             
             # Save database config
             db_config = {
+                "user_id": str(user.id),
                 "server": connection_data.server,
                 "database_name": connection_data.database_name,
                 "username": connection_data.username,
                 "password": connection_data.password,
                 "table_name": connection_data.table_name,
-                "driver": getattr(connection_data, 'driver', None)  # Include driver in config
+                "driver": getattr(connection_data, 'driver', None)
             }
             
             config_path = os.path.join(connection_dir, "db_config.json")
@@ -293,24 +317,63 @@ class ConnectionService:
                 server=connection.server,
                 database_name=connection.database_name,
                 table_name=connection.table_name,
-                driver=connection.driver,  # Include driver in response
+                driver=connection.driver,
                 status=connection.status,
                 test_successful=connection.test_successful,
                 column_descriptions_uploaded=connection.column_descriptions_uploaded,
                 generated_examples_count=connection.generated_examples_count,
+                total_queries=connection.total_queries or 0,
+                last_queried_at=connection.last_queried_at,
                 created_at=connection.created_at,
                 trained_at=connection.trained_at
             )
             
         except Exception as e:
             await db.rollback()
-            logger.error(f"Failed to create connection: {e}")
+            logger.error(f"Failed to create connection for user {user.email}: {e}")
             raise
     
-    async def get_connection(self, db: AsyncSession, connection_id: str) -> Optional[ConnectionResponse]:
-        """Get a connection by ID"""
+    async def list_user_connections(self, db: AsyncSession, user_id: str) -> List[ConnectionResponse]:
+        """List all connections for a specific user"""
         try:
-            stmt = select(Connection).where(Connection.id == uuid.UUID(connection_id))
+            stmt = select(Connection).where(
+                Connection.user_id == user_id
+            ).order_by(Connection.created_at.desc())
+            
+            result = await db.execute(stmt)
+            connections = result.scalars().all()
+            
+            return [
+                ConnectionResponse(
+                    id=str(conn.id),
+                    name=conn.name,
+                    server=conn.server,
+                    database_name=conn.database_name,
+                    table_name=conn.table_name,
+                    driver=conn.driver,
+                    status=conn.status,
+                    test_successful=conn.test_successful,
+                    column_descriptions_uploaded=conn.column_descriptions_uploaded,
+                    generated_examples_count=conn.generated_examples_count,
+                    total_queries=conn.total_queries or 0,
+                    last_queried_at=conn.last_queried_at,
+                    created_at=conn.created_at,
+                    trained_at=conn.trained_at
+                )
+                for conn in connections
+            ]
+            
+        except Exception as e:
+            logger.error(f"Failed to list connections for user {user_id}: {e}")
+            return []
+    
+    async def get_user_connection(self, db: AsyncSession, user_id: str, connection_id: str) -> Optional[ConnectionResponse]:
+        """Get a connection by ID that belongs to a specific user"""
+        try:
+            stmt = select(Connection).where(
+                Connection.id == uuid.UUID(connection_id),
+                Connection.user_id == user_id
+            )
             result = await db.execute(stmt)
             connection = result.scalar_one_or_none()
             
@@ -323,51 +386,73 @@ class ConnectionService:
                 server=connection.server,
                 database_name=connection.database_name,
                 table_name=connection.table_name,
+                driver=connection.driver,
                 status=connection.status,
                 test_successful=connection.test_successful,
                 column_descriptions_uploaded=connection.column_descriptions_uploaded,
                 generated_examples_count=connection.generated_examples_count,
+                total_queries=connection.total_queries or 0,
+                last_queried_at=connection.last_queried_at,
                 created_at=connection.created_at,
                 trained_at=connection.trained_at
             )
             
         except Exception as e:
-            logger.error(f"Failed to get connection {connection_id}: {e}")
+            logger.error(f"Failed to get connection {connection_id} for user {user_id}: {e}")
             return None
     
-    async def list_connections(self, db: AsyncSession) -> List[ConnectionResponse]:
-        """List all connections"""
+    async def delete_user_connection(self, db: AsyncSession, user_id: str, connection_id: str) -> bool:
+        """Delete a connection that belongs to a specific user"""
         try:
-            stmt = select(Connection).order_by(Connection.created_at.desc())
-            result = await db.execute(stmt)
-            connections = result.scalars().all()
+            connection_uuid = uuid.UUID(connection_id)
             
-            return [
-                ConnectionResponse(
-                    id=str(conn.id),
-                    name=conn.name,
-                    server=conn.server,
-                    database_name=conn.database_name,
-                    table_name=conn.table_name,
-                    status=conn.status,
-                    test_successful=conn.test_successful,
-                    column_descriptions_uploaded=conn.column_descriptions_uploaded,
-                    generated_examples_count=conn.generated_examples_count,
-                    created_at=conn.created_at,
-                    trained_at=conn.trained_at
-                )
-                for conn in connections
-            ]
+            # First verify the connection belongs to the user
+            stmt = select(Connection).where(
+                Connection.id == connection_uuid,
+                Connection.user_id == user_id
+            )
+            result = await db.execute(stmt)
+            connection = result.scalar_one_or_none()
+            
+            if not connection:
+                logger.warning(f"Connection {connection_id} not found for user {user_id}")
+                return False
+            
+            # Delete related records first (cascade deletes will handle conversations/messages)
+            await db.execute(delete(TrainingExample).where(TrainingExample.connection_id == connection_uuid))
+            await db.execute(delete(ColumnDescription).where(ColumnDescription.connection_id == connection_uuid))
+            await db.execute(delete(TrainingTask).where(TrainingTask.connection_id == connection_id))
+            
+            # Delete connection (conversations and messages will be deleted via cascade)
+            await db.execute(delete(Connection).where(
+                Connection.id == connection_uuid,
+                Connection.user_id == user_id
+            ))
+            
+            await db.commit()
+            
+            # Delete data directory
+            connection_dir = os.path.join(self.data_dir, "connections", connection_id)
+            if os.path.exists(connection_dir):
+                shutil.rmtree(connection_dir)
+                logger.info(f"Deleted data directory for connection {connection_id}")
+            
+            return True
             
         except Exception as e:
-            logger.error(f"Failed to list connections: {e}")
-            return []
+            await db.rollback()
+            logger.error(f"Failed to delete connection {connection_id} for user {user_id}: {e}")
+            return False
+    
+    # ========================
+    # EXISTING METHODS (KEPT FOR TRAINING/ADMIN USE)
+    # ========================
     
     async def get_training_data_view(self, db: AsyncSession, connection_id: str) -> Optional[TrainingDataView]:
         """Get training data view for a connection"""
         try:
             # Get connection
-            connection = await self.get_connection(db, connection_id)
+            connection = await self.get_connection_by_id(db, connection_id)
             if not connection:
                 return None
             
@@ -412,6 +497,16 @@ class ConnectionService:
             logger.error(f"Failed to get training data view for {connection_id}: {e}")
             return None
     
+    async def get_connection_by_id(self, db: AsyncSession, connection_id: str) -> Optional[Connection]:
+        """Get raw connection object by ID (for internal use)"""
+        try:
+            stmt = select(Connection).where(Connection.id == uuid.UUID(connection_id))
+            result = await db.execute(stmt)
+            return result.scalar_one_or_none()
+        except Exception as e:
+            logger.error(f"Failed to get connection {connection_id}: {e}")
+            return None
+    
     def _create_initial_prompt(self, table_name: str) -> str:
         """Create initial prompt for training"""
         return f"""You are a Microsoft SQL Server expert specializing in the {table_name} table. 
@@ -423,34 +518,6 @@ Key Guidelines:
 - Provide precise, executable queries
 - Handle edge cases and NULL values appropriately
 - Use appropriate aggregations, filtering, and sorting as needed"""
-    
-    async def delete_connection(self, db: AsyncSession, connection_id: str) -> bool:
-        """Delete a connection and all associated data"""
-        try:
-            connection_uuid = uuid.UUID(connection_id)
-            
-            # Delete related records first
-            await db.execute(delete(TrainingExample).where(TrainingExample.connection_id == connection_uuid))
-            await db.execute(delete(ColumnDescription).where(ColumnDescription.connection_id == connection_uuid))
-            await db.execute(delete(TrainingTask).where(TrainingTask.connection_id == connection_id))
-            
-            # Delete connection
-            await db.execute(delete(Connection).where(Connection.id == connection_uuid))
-            
-            await db.commit()
-            
-            # Delete data directory
-            connection_dir = os.path.join(self.data_dir, "connections", connection_id)
-            if os.path.exists(connection_dir):
-                shutil.rmtree(connection_dir)
-                logger.info(f"Deleted data directory for connection {connection_id}")
-            
-            return True
-            
-        except Exception as e:
-            await db.rollback()
-            logger.error(f"Failed to delete connection {connection_id}: {e}")
-            return False
     
     async def update_connection_status(self, db: AsyncSession, connection_id: str, status: ConnectionStatus) -> bool:
         """Update connection status"""

@@ -1,16 +1,16 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select  # ADD THIS IMPORT
+from sqlalchemy import select
 from typing import Optional
 import uuid
 import logging
 
-from app.dependencies import get_db, validate_api_key
+from app.dependencies import get_db, get_current_active_user, validate_api_key
 from app.services.training_service import training_service
-from app.core.vanna_wrapper import vanna_service
+from app.services.vanna_service import vanna_service
 from app.services.connection_service import connection_service
 from app.models.schemas import GenerateExamplesRequest, TaskResponse
-from app.models.database import TrainingTask, Connection, ConnectionStatus  # Connection is already imported
+from app.models.database import TrainingTask, Connection, ConnectionStatus, User
 from app.models.vanna_models import VannaConfig, DatabaseConfig
 from app.core.sse_manager import sse_manager
 from app.utils.sse_utils import SSELogger
@@ -24,17 +24,18 @@ async def generate_training_data(
     connection_id: str,
     request: GenerateExamplesRequest,
     background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
     _: bool = Depends(validate_api_key)
 ):
-    """Generate training data for a connection"""
+    """Generate training data for a user's connection"""
     try:
-        # Validate connection exists
-        connection = await connection_service.get_connection(db, connection_id)
+        # Validate connection exists and belongs to user
+        connection = await connection_service.get_user_connection(db, str(current_user.id), connection_id)
         if not connection:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Connection not found"
+                detail="Connection not found or access denied"
             )
         
         # Check connection status
@@ -49,6 +50,7 @@ async def generate_training_data(
         task = TrainingTask(
             id=task_id,
             connection_id=connection_id,
+            user_id=current_user.id,  # Track user
             task_type="generate_data",
             status="running"
         )
@@ -62,6 +64,7 @@ async def generate_training_data(
             connection_id,
             request.num_examples,
             task_id,
+            current_user,
             db
         )
         
@@ -88,17 +91,18 @@ async def generate_training_data(
 async def train_model(
     connection_id: str,
     background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
     _: bool = Depends(validate_api_key)
 ):
-    """Train Vanna model for a connection"""
+    """Train Vanna model for a user's connection"""
     try:
-        # Validate connection exists
-        connection = await connection_service.get_connection(db, connection_id)
+        # Validate connection exists and belongs to user
+        connection = await connection_service.get_user_connection(db, str(current_user.id), connection_id)
         if not connection:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Connection not found"
+                detail="Connection not found or access denied"
             )
         
         # Check connection status
@@ -113,6 +117,7 @@ async def train_model(
         task = TrainingTask(
             id=task_id,
             connection_id=connection_id,
+            user_id=current_user.id,  # Track user
             task_type="train_model",
             status="running"
         )
@@ -125,6 +130,7 @@ async def train_model(
             _run_model_training,
             connection_id,
             task_id,
+            current_user,
             db
         )
         
@@ -150,23 +156,28 @@ async def train_model(
 @router.get("/tasks/{task_id}/status")
 async def get_task_status(
     task_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get training task status"""
+    """Get training task status (must belong to current user)"""
     try:
-        stmt = select(TrainingTask).where(TrainingTask.id == task_id)
+        stmt = select(TrainingTask).where(
+            TrainingTask.id == task_id,
+            TrainingTask.user_id == current_user.id  # Ensure user owns the task
+        )
         result = await db.execute(stmt)
         task = result.scalar_one_or_none()
         
         if not task:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Task not found"
+                detail="Task not found or access denied"
             )
         
         return {
             "task_id": task.id,
             "connection_id": task.connection_id,
+            "user_id": str(task.user_id),
             "task_type": task.task_type,
             "status": task.status,
             "progress": task.progress,
@@ -185,10 +196,59 @@ async def get_task_status(
             detail=f"Failed to get task status: {str(e)}"
         )
 
+@router.get("/tasks")
+async def list_user_tasks(
+    task_type: Optional[str] = None,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """List current user's training tasks"""
+    try:
+        query = select(TrainingTask).where(TrainingTask.user_id == current_user.id)
+        
+        if task_type:
+            query = query.where(TrainingTask.task_type == task_type)
+            
+        query = query.order_by(TrainingTask.created_at.desc()).limit(50)
+        
+        result = await db.execute(query)
+        tasks = result.scalars().all()
+        
+        return {
+            "tasks": [
+                {
+                    "task_id": task.id,
+                    "connection_id": task.connection_id,
+                    "task_type": task.task_type,
+                    "status": task.status,
+                    "progress": task.progress,
+                    "error_message": task.error_message,
+                    "started_at": task.started_at,
+                    "completed_at": task.completed_at,
+                    "created_at": task.created_at
+                }
+                for task in tasks
+            ],
+            "total": len(tasks),
+            "user_id": str(current_user.id)
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to list user tasks: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to list tasks: {str(e)}"
+        )
+
+# ========================
+# BACKGROUND TASKS
+# ========================
+
 async def _run_data_generation(
     connection_id: str, 
     num_examples: int, 
-    task_id: str, 
+    task_id: str,
+    user: User,
     db: AsyncSession
 ):
     """Background task for data generation"""
@@ -197,28 +257,36 @@ async def _run_data_generation(
     try:
         await _update_task_status(db, task_id, "running", 0)
         await sse_logger.info(f"Starting data generation for {num_examples} examples")
+        await sse_manager.send_to_task(task_id, "data_generation_started", {
+            "user_id": str(user.id),
+            "connection_id": connection_id,
+            "num_examples": num_examples,
+            "task_id": task_id
+        })
         
         # Run data generation
         result = await training_service.generate_training_data(
-            db, connection_id, num_examples, task_id
+            db, user, connection_id, num_examples, task_id
         )
-        
+                
         if result.success:
             await _update_task_status(db, task_id, "completed", 100)
-            await sse_manager.send_to_task(task_id, "generation_completed", {
+            await sse_manager.send_to_task(task_id, "data_generation_completed", {
                 "success": True,
                 "total_generated": result.total_generated,
                 "failed_count": result.failed_count,
                 "connection_id": connection_id,
+                "user_id": str(user.id),
                 "task_id": task_id
             })
             await sse_logger.info("Data generation completed successfully")
         else:
             await _update_task_status(db, task_id, "failed", 0, result.error_message)
-            await sse_manager.send_to_task(task_id, "generation_failed", {
+            await sse_manager.send_to_task(task_id, "data_generation_error", {
                 "success": False,
                 "error": result.error_message,
                 "connection_id": connection_id,
+                "user_id": str(user.id),
                 "task_id": task_id
             })
             await sse_logger.error(f"Data generation failed: {result.error_message}")
@@ -227,29 +295,41 @@ async def _run_data_generation(
         error_msg = f"Data generation task failed: {str(e)}"
         logger.error(error_msg)
         await _update_task_status(db, task_id, "failed", 0, error_msg)
-        await sse_manager.send_to_task(task_id, "generation_failed", {
+        await sse_manager.send_to_task(task_id, "data_generation_error", {
             "success": False,
             "error": error_msg,
             "connection_id": connection_id,
+            "user_id": str(user.id),
             "task_id": task_id
         })
         await sse_logger.error(error_msg)
 
-async def _run_model_training(connection_id: str, task_id: str, db: AsyncSession):
+async def _run_model_training(
+    connection_id: str, 
+    task_id: str, 
+    user: User,
+    db: AsyncSession
+):
     """Background task for model training"""
     sse_logger = SSELogger(sse_manager, task_id, "training")
     
     try:
         await _update_task_status(db, task_id, "running", 0)
         await sse_logger.info("Starting model training")
+        await sse_manager.send_to_task(task_id, "training_started", {
+            "user_id": str(user.id),
+            "connection_id": connection_id,
+            "task_id": task_id
+        })
         
-        # FIXED: Get raw connection details with all fields (including username/password)
-        stmt = select(Connection).where(Connection.id == uuid.UUID(connection_id))
-        result = await db.execute(stmt)
-        connection = result.scalar_one_or_none()
-        
+        # Get raw connection details with all fields
+        connection = await connection_service.get_connection_by_id(db, connection_id)
         if not connection:
             raise ValueError("Connection not found")
+        
+        # Verify user ownership
+        if str(connection.user_id) != str(user.id):
+            raise ValueError("Access denied: Connection does not belong to user")
         
         # Create configurations
         vanna_config = VannaConfig(
@@ -261,10 +341,10 @@ async def _run_model_training(connection_id: str, task_id: str, db: AsyncSession
         db_config = DatabaseConfig(
             server=connection.server,
             database_name=connection.database_name,
-            username=connection.username,  # NOW WORKS: Raw Connection has username
-            password=connection.password,  # NOW WORKS: Raw Connection has password
+            username=connection.username,
+            password=connection.password,
             table_name=connection.table_name,
-            driver=connection.driver or "ODBC Driver 17 for SQL Server"  # Use default if not set
+            driver=connection.driver or "ODBC Driver 17 for SQL Server"
         )
         
         # Progress callback for SSE updates
@@ -286,6 +366,7 @@ async def _run_model_training(connection_id: str, task_id: str, db: AsyncSession
                 "success": True,
                 "connection_id": connection_id,
                 "connection_name": connection.name,
+                "user_id": str(user.id),
                 "task_id": task_id
             })
             await sse_logger.info("Model training completed successfully")
@@ -296,10 +377,11 @@ async def _run_model_training(connection_id: str, task_id: str, db: AsyncSession
         error_msg = f"Model training failed: {str(e)}"
         logger.error(error_msg)
         await _update_task_status(db, task_id, "failed", 0, error_msg)
-        await sse_manager.send_to_task(task_id, "training_failed", {
+        await sse_manager.send_to_task(task_id, "training_error", {
             "success": False,
             "error": error_msg,
             "connection_id": connection_id,
+            "user_id": str(user.id),
             "task_id": task_id
         })
         await sse_logger.error(error_msg)

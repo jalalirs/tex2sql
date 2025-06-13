@@ -5,14 +5,14 @@ from typing import Optional, List
 import uuid
 import logging
 
-from app.dependencies import get_db, validate_api_key
+from app.dependencies import get_db, get_current_active_user, validate_api_key
 from app.services.connection_service import connection_service
 from app.models.schemas import (
     ConnectionCreate, ConnectionResponse, ConnectionTestRequest, ConnectionTestResult,
     ConnectionListResponse, TrainingDataView, ColumnDescriptionItem, TaskResponse,
     ConnectionDeleteResponse
 )
-from app.models.database import TrainingTask
+from app.models.database import TrainingTask, User
 from app.core.sse_manager import sse_manager
 from app.utils.file_handler import file_handler
 from app.utils.validators import validate_connection_data
@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 async def test_connection(
     request: ConnectionTestRequest,
     background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
     _: bool = Depends(validate_api_key)
 ):
@@ -43,6 +44,7 @@ async def test_connection(
         task = TrainingTask(
             id=task_id,
             connection_id=None,  # No connection yet
+            user_id=current_user.id,  # Track user
             task_type="test_connection",
             status="running"
         )
@@ -55,6 +57,7 @@ async def test_connection(
             _run_connection_test,
             request.connection_data,
             task_id,
+            current_user,
             db
         )
         
@@ -72,7 +75,7 @@ async def test_connection(
             detail=f"Connection test failed: {str(e)}"
         )
 
-async def _run_connection_test(connection_data: ConnectionCreate, task_id: str, db: AsyncSession):
+async def _run_connection_test(connection_data: ConnectionCreate, task_id: str, user: User, db: AsyncSession):
     """Background task to run connection test"""
     try:
         # Update task status
@@ -115,13 +118,24 @@ async def create_connection(
     username: str = Form(...),
     password: str = Form(...),
     table_name: str = Form(...),
-    driver: Optional[str] = Form(None),  # Optional driver field
+    driver: Optional[str] = Form(None),
     column_descriptions_file: Optional[UploadFile] = File(None),
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
     _: bool = Depends(validate_api_key)
 ):
-    """Create a new database connection"""
+    """Create a new database connection for the authenticated user"""
     try:
+        # Check if user already has a connection with this name
+        existing_connection = await connection_service.get_user_connection_by_name(
+            db, current_user.id, name
+        )
+        if existing_connection:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"You already have a connection named '{name}'"
+            )
+        
         # Build connection data from form fields
         connection_data = ConnectionCreate(
             name=name,
@@ -130,7 +144,7 @@ async def create_connection(
             username=username,
             password=password,
             table_name=table_name,
-            driver=driver  # Include the optional driver
+            driver=driver
         )
         
         # Validate connection data
@@ -153,12 +167,12 @@ async def create_connection(
                     detail=f"Error processing column descriptions file: {str(e)}"
                 )
         
-        # Create connection
-        connection = await connection_service.create_connection(
-            db, connection_data, column_descriptions
+        # Create connection for user
+        connection = await connection_service.create_connection_for_user(
+            db, current_user, connection_data, column_descriptions
         )
         
-        logger.info(f"Created connection: {connection.id}")
+        logger.info(f"Created connection: {connection.id} for user {current_user.email}")
         return connection
         
     except HTTPException:
@@ -171,10 +185,13 @@ async def create_connection(
         )
     
 @router.get("/", response_model=ConnectionListResponse)
-async def list_connections(db: AsyncSession = Depends(get_db)):
-    """List all connections"""
+async def list_connections(
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """List current user's connections"""
     try:
-        connections = await connection_service.list_connections(db)
+        connections = await connection_service.list_user_connections(db, current_user.id)
         return ConnectionListResponse(
             connections=connections,
             total=len(connections)
@@ -189,15 +206,16 @@ async def list_connections(db: AsyncSession = Depends(get_db)):
 @router.get("/{connection_id}", response_model=ConnectionResponse)
 async def get_connection(
     connection_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get a specific connection"""
+    """Get a specific connection (must belong to current user)"""
     try:
-        connection = await connection_service.get_connection(db, connection_id)
+        connection = await connection_service.get_user_connection(db, current_user.id, connection_id)
         if not connection:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Connection not found"
+                detail="Connection not found or access denied"
             )
         return connection
     except HTTPException:
@@ -212,15 +230,24 @@ async def get_connection(
 @router.get("/{connection_id}/training-data", response_model=TrainingDataView)
 async def get_training_data_view(
     connection_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Get training data view for a connection"""
+    """Get training data view for a user's connection"""
     try:
+        # First check if user owns the connection
+        connection = await connection_service.get_user_connection(db, current_user.id, connection_id)
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Connection not found or access denied"
+            )
+        
         training_data = await connection_service.get_training_data_view(db, connection_id)
         if not training_data:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Connection not found or no training data available"
+                detail="No training data available"
             )
         return training_data
     except HTTPException:
@@ -235,20 +262,21 @@ async def get_training_data_view(
 @router.delete("/{connection_id}", response_model=ConnectionDeleteResponse)
 async def delete_connection(
     connection_id: str,
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Delete a connection and all associated data"""
+    """Delete a connection and all associated data (must belong to current user)"""
     try:
-        # Check if connection exists
-        connection = await connection_service.get_connection(db, connection_id)
+        # Check if connection exists and belongs to user
+        connection = await connection_service.get_user_connection(db, current_user.id, connection_id)
         if not connection:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Connection not found"
+                detail="Connection not found or access denied"
             )
         
-        # Delete connection
-        success = await connection_service.delete_connection(db, connection_id)
+        # Delete connection (this will also delete conversations and messages via cascade)
+        success = await connection_service.delete_user_connection(db, current_user.id, connection_id)
         
         if success:
             # Clean up uploaded files
@@ -277,16 +305,17 @@ async def delete_connection(
 async def validate_column_descriptions_csv(
     connection_id: str,
     file: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db)
 ):
-    """Validate column descriptions CSV file format"""
+    """Validate column descriptions CSV file format for user's connection"""
     try:
-        # Check if connection exists
-        connection = await connection_service.get_connection(db, connection_id)
+        # Check if connection exists and belongs to user
+        connection = await connection_service.get_user_connection(db, current_user.id, connection_id)
         if not connection:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="Connection not found"
+                detail="Connection not found or access denied"
             )
         
         # Validate file

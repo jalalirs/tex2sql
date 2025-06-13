@@ -1,5 +1,3 @@
-
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -8,7 +6,10 @@ import logging
 from app.config import settings, validate_settings
 from app.core.database import create_tables, close_database
 from app.core.sse_manager import sse_manager
-from app.api import events, connections, training, chat, health  # Add health import
+from app.api import (
+    authentication, user, events, connections, 
+    training, conversation, health
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO if not settings.DEBUG else logging.DEBUG)
@@ -61,12 +62,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(events.router)
+# Include routers in logical order
+# Authentication routes (no auth required)
+app.include_router(authentication.router)
+
+# User management routes (auth required)
+app.include_router(user.router)
+
+# Core functionality routes (auth required)
 app.include_router(connections.router)
+app.include_router(conversation.router)
 app.include_router(training.router)
-app.include_router(chat.router)
-app.include_router(health.router)  # Add health router
+
+# System routes
+app.include_router(events.router)
+app.include_router(health.router)
 
 @app.get("/")
 async def root():
@@ -74,7 +84,15 @@ async def root():
     return {
         "message": "Tex2SQL API",
         "version": "1.0.0",
-        "status": "running"
+        "status": "running",
+        "features": [
+            "User Authentication",
+            "Database Connections",
+            "AI Training",
+            "Natural Language to SQL",
+            "Real-time Events",
+            "Conversation Management"
+        ]
     }
 
 @app.get("/health")
@@ -89,7 +107,34 @@ async def health_check():
         "status": "healthy" if db_healthy else "unhealthy",
         "database": "connected" if db_healthy else "disconnected",
         "sse_connections": sse_stats["total_connections"],
-        "sse_tasks": sse_stats["total_tasks"]
+        "sse_tasks": sse_stats["total_tasks"],
+        "version": "1.0.0",
+        "authentication": "enabled"
+    }
+
+@app.get("/api/info")
+async def api_info():
+    """API information endpoint"""
+    return {
+        "api_name": "Tex2SQL",
+        "version": "1.0.0",
+        "description": "Text-to-SQL AI Platform with user authentication",
+        "endpoints": {
+            "authentication": "/auth/*",
+            "users": "/users/*",
+            "connections": "/connections/*",
+            "conversations": "/conversations/*",
+            "training": "/training/*",
+            "events": "/events/*",
+            "health": "/health/*"
+        },
+        "features": {
+            "user_authentication": True,
+            "conversation_management": True,
+            "ai_training": True,
+            "real_time_events": True,
+            "database_connections": True
+        }
     }
 
 if __name__ == "__main__":

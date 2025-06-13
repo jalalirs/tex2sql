@@ -23,11 +23,14 @@ except ImportError:
     PLOTLY_AVAILABLE = False
 
 class Tex2SQLClient:
-    """Client for interacting with Tex2SQL API"""
+    """Client for interacting with Tex2SQL API with authentication"""
     
     def __init__(self, base_url: str = "http://localhost:6020"):
         self.base_url = base_url.rstrip('/')
         self.session = None
+        self.access_token = None
+        self.refresh_token = None
+        self.user_info = None
     
     async def __aenter__(self):
         self.session = aiohttp.ClientSession()
@@ -37,10 +40,157 @@ class Tex2SQLClient:
         if self.session:
             await self.session.close()
     
+    def _get_auth_headers(self) -> Dict[str, str]:
+        """Get authentication headers"""
+        if self.access_token:
+            return {"Authorization": f"Bearer {self.access_token}"}
+        return {}
+    
+    async def register_user(self, username: str, email: str, password: str, full_name: str = None) -> Dict[str, Any]:
+        """Register a new user"""
+        try:
+            payload = {
+                "username": username,
+                "email": email,
+                "password": password,
+                "full_name": full_name or username
+            }
+            
+            async with self.session.post(f"{self.base_url}/auth/register", json=payload) as response:
+                if response.status == 201:
+                    result = await response.json()
+                    print(f"✅ User registered successfully: {result['user']['email']}")
+                    return result
+                elif response.status == 200:
+                    result = await response.json()
+                    print(f"✅ User registered successfully: {result['user']['email']}")
+                    return result
+                elif response.status == 400:
+                    error_data = await response.json()
+                    error_detail = error_data.get("detail", "Registration failed")
+                    if "already registered" in error_detail.lower() or "already exists" in error_detail.lower():
+                        print(f"ℹ️ User already exists: {email}")
+                        return {"user_exists": True}
+                    else:
+                        raise Exception(f"Registration failed: {error_detail}")
+                else:
+                    error_text = await response.text()
+                    print(f"Registration response status: {response.status}")
+                    print(f"Registration response: {error_text}")
+                    raise Exception(f"Registration failed: {error_text}")
+        except Exception as e:
+            print(f"Error registering user: {e}")
+            raise
+    
+    async def login_user(self, email: str, password: str) -> Dict[str, Any]:
+        """Login user and get tokens"""
+        try:
+            # Your API expects JSON with UserLogin model
+            payload = {
+                "email": email,
+                "password": password
+            }
+            
+            async with self.session.post(f"{self.base_url}/auth/login", json=payload) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    self.access_token = result["access_token"]
+                    self.refresh_token = result.get("refresh_token")
+                    print(f"✅ Login successful for: {email}")
+                    
+                    # Get user info
+                    await self.get_current_user()
+                    return result
+                else:
+                    error_text = await response.text()
+                    print(f"Login failed with status {response.status}")
+                    print(f"Response: {error_text}")
+                    try:
+                        error_data = await response.json()
+                        error_detail = error_data.get("detail", "Login failed")
+                    except:
+                        error_detail = error_text
+                    raise Exception(f"Login failed: {error_detail}")
+                            
+        except Exception as e:
+            print(f"Error logging in: {e}")
+            raise
+    
+    async def get_current_user(self) -> Dict[str, Any]:
+        """Get current user information"""
+        try:
+            headers = self._get_auth_headers()
+            async with self.session.get(f"{self.base_url}/users/me", headers=headers) as response:
+                if response.status == 200:
+                    self.user_info = await response.json()
+                    return self.user_info
+                else:
+                    error = await response.text()
+                    raise Exception(f"Failed to get user info: {error}")
+        except Exception as e:
+            print(f"Error getting user info: {e}")
+            raise
+    
+    async def authenticate_user(self, username: str, email: str, password: str) -> bool:
+        """Authenticate user - register if not exists, then login"""
+        try:
+            # Try to login first
+            try:
+                await self.login_user(email, password)
+                return True
+            except Exception as login_error:
+                print(f"🔑 Login failed, attempting registration...")
+                
+                # Try to register
+                try:
+                    register_result = await self.register_user(username, email, password)
+                    
+                    if register_result.get("user_exists"):
+                        # User exists but login failed - probably wrong password
+                        raise Exception(f"User exists but login failed. Please check your password.")
+                    
+                    # Registration successful, now login
+                    await self.login_user(email, password)
+                    return True
+                    
+                except Exception as register_error:
+                    print(f"❌ Both login and registration failed:")
+                    print(f"   Login error: {login_error}")
+                    print(f"   Registration error: {register_error}")
+                    raise Exception("Authentication failed")
+                    
+        except Exception as e:
+            print(f"❌ Authentication error: {e}")
+            raise
+    
+    async def create_conversation(self, connection_id: str, title: str = None) -> Dict[str, Any]:
+        """Create a new conversation"""
+        try:
+            headers = self._get_auth_headers()
+            payload = {
+                "connection_id": connection_id,
+                "title": title or f"Conversation at {time.strftime('%Y-%m-%d %H:%M')}"
+            }
+            
+            async with self.session.post(f"{self.base_url}/conversations/", json=payload, headers=headers) as response:
+                if response.status == 200 or response.status == 201:
+                    result = await response.json()
+                    print(f"🔍 DEBUG: Conversation created successfully: {result.get('id', 'unknown')}")
+                    return result
+                else:
+                    error_text = await response.text()
+                    print(f"🔍 DEBUG: Conversation creation failed with status {response.status}")
+                    print(f"🔍 DEBUG: Error response: {error_text}")
+                    raise Exception(f"Failed to create conversation: {error_text}")
+        except Exception as e:
+            print(f"Error creating conversation: {e}")
+            raise
+    
     async def check_connection_exists(self, connection_name: str) -> Optional[Dict[str, Any]]:
         """Check if a connection exists by name"""
         try:
-            async with self.session.get(f"{self.base_url}/connections/") as response:
+            headers = self._get_auth_headers()
+            async with self.session.get(f"{self.base_url}/connections/", headers=headers) as response:
                 if response.status == 200:
                     data = await response.json()
                     for conn in data.get("connections", []):
@@ -54,8 +204,10 @@ class Tex2SQLClient:
     async def test_connection(self, connection_data: Dict[str, Any]) -> str:
         """Test a database connection and return task_id for SSE tracking"""
         try:
+            headers = self._get_auth_headers()
             payload = {"connection_data": connection_data}
-            async with self.session.post(f"{self.base_url}/connections/test", json=payload) as response:
+            
+            async with self.session.post(f"{self.base_url}/connections/test", json=payload, headers=headers) as response:
                 if response.status == 200:
                     result = await response.json()
                     return result.get("task_id")
@@ -69,7 +221,9 @@ class Tex2SQLClient:
     async def create_connection(self, connection_data: Dict[str, Any], csv_file_path: Optional[str] = None) -> Dict[str, Any]:
         """Create a new connection with optional CSV file"""
         try:
-            # Your API expects form data with individual fields
+            headers = self._get_auth_headers()
+            
+            # Prepare form data
             data = aiohttp.FormData()
             
             # Add individual connection data fields
@@ -83,7 +237,7 @@ class Tex2SQLClient:
                                  filename=os.path.basename(csv_file_path),
                                  content_type='text/csv')
             
-            async with self.session.post(f"{self.base_url}/connections/", data=data) as response:
+            async with self.session.post(f"{self.base_url}/connections/", data=data, headers=headers) as response:
                 if response.status == 200:
                     return await response.json()
                 else:
@@ -97,13 +251,23 @@ class Tex2SQLClient:
     async def generate_training_data(self, connection_id: str, num_examples: int = 20) -> str:
         """Generate training data and return task_id for tracking"""
         try:
-            payload = {"connection_id": connection_id, "num_examples": num_examples}
-            async with self.session.post(f"{self.base_url}/training/connections/{connection_id}/generate-data", json=payload) as response:
+            headers = self._get_auth_headers()
+            payload = {
+                "connection_id": connection_id,  # Add connection_id to the payload
+                "num_examples": num_examples
+            }
+            
+            async with self.session.post(f"{self.base_url}/training/connections/{connection_id}/generate-data", 
+                                       json=payload, headers=headers) as response:
                 if response.status == 200:
                     result = await response.json()
-                    return result.get("task_id")
+                    task_id = result.get("task_id")
+                    print(f"🔍 DEBUG: Training data generation started with task_id: {task_id}")
+                    return task_id
                 else:
                     error = await response.text()
+                    print(f"🔍 DEBUG: Training data generation failed with status {response.status}")
+                    print(f"🔍 DEBUG: Error response: {error}")
                     raise Exception(f"Failed to start data generation: {error}")
         except Exception as e:
             print(f"Error generating training data: {e}")
@@ -112,7 +276,10 @@ class Tex2SQLClient:
     async def train_model(self, connection_id: str) -> str:
         """Train the model and return task_id for tracking"""
         try:
-            async with self.session.post(f"{self.base_url}/training/connections/{connection_id}/train") as response:
+            headers = self._get_auth_headers()
+            
+            async with self.session.post(f"{self.base_url}/training/connections/{connection_id}/train", 
+                                       headers=headers) as response:
                 if response.status == 200:
                     result = await response.json()
                     return result.get("task_id")
@@ -123,11 +290,14 @@ class Tex2SQLClient:
             print(f"Error training model: {e}")
             raise
     
-    async def query_database(self, connection_id: str, question: str) -> str:
-        """Query the database and return session_id for tracking"""
+    async def query_database(self, conversation_id: str, question: str) -> str:
+        """Query the database through a conversation and return session_id for tracking"""
         try:
-            payload = {"question": question, "chat_history": []}
-            async with self.session.post(f"{self.base_url}/chat/connections/{connection_id}/query", json=payload) as response:
+            headers = self._get_auth_headers()
+            payload = {"question": question}
+            
+            async with self.session.post(f"{self.base_url}/conversations/{conversation_id}/query", 
+                                       json=payload, headers=headers) as response:
                 if response.status == 200:
                     result = await response.json()
                     return result.get("session_id")
@@ -139,11 +309,14 @@ class Tex2SQLClient:
             raise
     
     async def stream_sse_events(self, task_id: str, timeout: int = 300):
-        """Stream SSE events for a task - COMPLETELY FIXED VERSION"""
+        """Stream SSE events for a task"""
         try:
+            headers = self._get_auth_headers()
+            headers['Accept'] = 'text/event-stream'
+            
             url = f"{self.base_url}/events/stream/{task_id}"
             
-            async with self.session.get(url, headers={'Accept': 'text/event-stream'}) as response:
+            async with self.session.get(url, headers=headers) as response:
                 if response.status != 200:
                     raise Exception(f"Failed to connect to SSE stream: {response.status}")
                 
@@ -161,45 +334,36 @@ class Tex2SQLClient:
                     
                     # Handle different SSE line types
                     if line.startswith('event: '):
-                        current_event['event'] = line[7:]  # Remove 'event: ' prefix
+                        current_event['event'] = line[7:]
                     elif line.startswith('data: '):
-                        current_event['data'] = line[6:]  # Remove 'data: ' prefix
+                        current_event['data'] = line[6:]
                     elif line.startswith('id: '):
-                        current_event['id'] = line[4:]  # Remove 'id: ' prefix
+                        current_event['id'] = line[4:]
                     elif line.startswith(': '):
-                        # Comment/ping line - ignore but continue
                         continue
                     elif line == '':
-                        # Empty line indicates end of event
                         if current_event:
-                            # Process the complete event
                             event_type = current_event.get('event', 'unknown')
                             
                             try:
-                                # Parse JSON data
                                 if 'data' in current_event:
                                     event_data = json.loads(current_event['data'])
                                     event_data['event_type'] = event_type
                                     
                                     yield event_data
                                     
-                                    # Check if this is a completion event that should close the stream
-                                    if event_type in ['test_completed', 'training_completed', 'data_generation_completed', 'query_completed', 'query_result', 'completed', 'error']:
+                                    if event_type in ['test_completed', 'training_completed', 'data_generation_completed', 'query_completed', 'completed', 'error']:
                                         print(f"🏁 Received completion event: {event_type}")
                                         break
                                         
                             except json.JSONDecodeError as e:
-                                # If JSON parsing fails, yield raw data
                                 yield {
                                     'event_type': event_type,
                                     'raw_data': current_event.get('data', ''),
                                     'parse_error': str(e)
                                 }
                             
-                            # Reset for next event
                             current_event = {}
-                    
-                    # If we get here with non-empty line that doesn't match patterns, it might be malformed
                     elif line.strip():
                         print(f"⚠️ Unexpected SSE line format: {repr(line)}")
                         
@@ -208,7 +372,7 @@ class Tex2SQLClient:
             raise
 
 async def process_connection_workflow(config_file: str):
-    """Main workflow to process a connection configuration"""
+    """Main workflow to process a connection configuration with authentication"""
     
     # Load configuration
     if not os.path.exists(config_file):
@@ -217,35 +381,59 @@ async def process_connection_workflow(config_file: str):
     with open(config_file, 'r') as f:
         config = json.load(f)
     
-    required_fields = ["connection_name", "server", "database_name", "username", "password", "table_name"]
+    # Check required fields
+    required_fields = ["connection_name", "server", "database_name", "db_username", "db_password", "table_name", "username", "password", "email"]
     for field in required_fields:
         if field not in config:
             raise ValueError(f"Missing required field in config: {field}")
     
+    # Extract auth info
+    auth_username = config["username"]
+    auth_password = config["password"]
+    auth_email = config["email"]
+    
+    # Extract connection info
     connection_name = config["connection_name"]
     csv_file_path = config.get("column_description")
     
-    # Prepare connection data
+    # Prepare database connection data
     connection_data = {
         "name": connection_name,
         "server": config["server"],
         "database_name": config["database_name"],
-        "username": config["username"],
-        "password": config["password"],
+        "username": config["db_username"],  # Database username
+        "password": config["db_password"],  # Database password
         "table_name": config["table_name"],
         "driver": config.get("driver", "ODBC Driver 17 for SQL Server")
     }
     
     print(f"🚀 Starting workflow for connection: {connection_name}")
+    print(f"👤 Authenticating user: {auth_email}")
     
     async with Tex2SQLClient() as client:
-        # Check if connection exists
+        # Step 1: Authenticate user
+        try:
+            await client.authenticate_user(auth_username, auth_email, auth_password)
+            print(f"✅ Authentication successful for: {auth_email}")
+        except Exception as e:
+            print(f"❌ Authentication failed: {e}")
+            return
+        
+        # Step 2: Check if connection exists
         print("🔍 Checking if connection exists...")
         existing_connection = await client.check_connection_exists(connection_name)
+        
+        conversation_id = None
         
         if existing_connection:
             print(f"✅ Connection '{connection_name}' already exists")
             connection_id = existing_connection["id"]
+            
+            # Create conversation for this connection
+            print("💬 Creating conversation...")
+            conversation = await client.create_conversation(connection_id, f"Query session for {connection_name}")
+            conversation_id = conversation["id"]
+            print(f"✅ Conversation created: {conversation_id}")
             
             # Check if it's trained
             if existing_connection.get("status") == "trained":
@@ -254,7 +442,7 @@ async def process_connection_workflow(config_file: str):
                 print(f"⚠️ Connection exists but status is: {existing_connection.get('status', 'unknown')}")
                 print("🔄 Need to complete training process...")
                 
-                # Check what stage we're at and continue from there
+                # Complete training based on current status
                 current_status = existing_connection.get("status")
                 
                 if current_status == "test_success":
@@ -301,6 +489,12 @@ async def process_connection_workflow(config_file: str):
             connection_id = connection_result["id"]
             print(f"✅ Connection created with ID: {connection_id}")
             
+            # Create conversation for this connection
+            print("💬 Creating conversation...")
+            conversation = await client.create_conversation(connection_id, f"Query session for {connection_name}")
+            conversation_id = conversation["id"]
+            print(f"✅ Conversation created: {conversation_id}")
+            
             # Generate training data
             print("📊 Generating training data...")
             task_id = await client.generate_training_data(connection_id)
@@ -311,27 +505,26 @@ async def process_connection_workflow(config_file: str):
             task_id = await client.train_model(connection_id)
             await track_task_progress(client, task_id, "Model Training")
         
-        # Query the database
+        # Step 3: Query the database through conversation
         question = "Compare the salaries of the employees"
         print(f"❓ Querying: {question}")
-        session_id = await client.query_database(connection_id, question)
+        session_id = await client.query_database(conversation_id, question)
         await track_query_progress(client, session_id, question)
 
 async def track_task_progress(client: Tex2SQLClient, task_id: str, task_name: str) -> bool:
-    """Track progress of a task via SSE - COMPLETELY FIXED VERSION"""
+    """Track progress of a task via SSE"""
     print(f"📡 Tracking {task_name} progress...")
     
     success = False
     events_received = 0
     
     try:
-        async for event in client.stream_sse_events(task_id, timeout=600):  # 10 minutes timeout
+        async for event in client.stream_sse_events(task_id, timeout=600):
             events_received += 1
             
             event_type = event.get("event_type", "unknown")
             print(f"  📥 Event #{events_received}: {event_type}")
             
-            # Handle different event types
             if event_type == "connected":
                 print(f"    🔗 Connected to task stream")
                 continue
@@ -353,16 +546,14 @@ async def track_task_progress(client: Tex2SQLClient, task_id: str, task_name: st
             elif event_type == "log":
                 level = event.get("level", "info")
                 message = event.get("message", "")
-                source = event.get("source", "system")
                 print(f"    📝 [{level.upper()}] {message}")
                 continue
                 
-            elif event_type in ["test_completed", "training_completed", "data_generation_completed"]:
+            elif event_type in ["test_completed", "training_completed", "data_generation_completed", "completed"]:
                 success = event.get("success", False)
                 if success:
                     print(f"    ✅ {task_name} completed successfully!")
                     
-                    # Show additional info for test completion
                     if event_type == "test_completed" and "sample_data" in event:
                         sample_count = len(event.get("sample_data", []))
                         column_count = len(event.get("column_info", {}))
@@ -382,7 +573,6 @@ async def track_task_progress(client: Tex2SQLClient, task_id: str, task_name: st
                 break
                 
             else:
-                # Handle any other event types
                 if "message" in event:
                     print(f"    📝 {event['message']}")
                 
@@ -396,7 +586,6 @@ async def track_task_progress(client: Tex2SQLClient, task_id: str, task_name: st
                             print(f"    ❗ Error: {event['error']}")
                     break
                     
-                # Print unknown events for debugging
                 print(f"    🔍 Unknown event data: {json.dumps(event, indent=2)}")
     
     except asyncio.TimeoutError:
@@ -411,7 +600,7 @@ async def track_task_progress(client: Tex2SQLClient, task_id: str, task_name: st
     return success
 
 async def track_query_progress(client: Tex2SQLClient, session_id: str, question: str):
-    """Track query progress and display results - FIXED VERSION"""
+    """Track query progress and display results"""
     print(f"📡 Tracking query progress...")
     
     query_result = {
@@ -425,7 +614,7 @@ async def track_query_progress(client: Tex2SQLClient, session_id: str, question:
     events_received = 0
     
     try:
-        async for event in client.stream_sse_events(session_id, timeout=300):  # 5 minutes timeout
+        async for event in client.stream_sse_events(session_id, timeout=300):
             events_received += 1
             event_type = event.get("event_type", "unknown")
             print(f"  📥 Query Event #{events_received}: {event_type}")
@@ -438,7 +627,7 @@ async def track_query_progress(client: Tex2SQLClient, session_id: str, question:
                 print(f"    💓 Heartbeat")
                 continue
                 
-            elif event_type in ["query_started", "sql_generated", "data_retrieved", "chart_generated", "summary_generated", "query_result", "sql_validated", "data_fetched", "chart_skipped", "followup_generated"]:
+            elif event_type in ["query_started", "sql_generated", "data_retrieved", "chart_generated", "summary_generated", "query_completed", "sql_validated", "data_fetched", "chart_skipped", "followup_generated"]:
                 if "message" in event:
                     print(f"    📝 {event['message']}")
                 
@@ -446,34 +635,7 @@ async def track_query_progress(client: Tex2SQLClient, session_id: str, question:
                     progress = event.get("progress", 0)
                     print(f"    📊 Progress: {progress}%")
                 
-                # Handle query_result event (complete result)
-                if event_type == "query_result":
-                    print(f"    ✅ Query completed successfully!")
-                    
-                    # Capture all data from the complete result
-                    if "sql" in event:
-                        query_result["sql"] = event["sql"]
-                        print(f"    🔍 Generated SQL: {event['sql'][:100]}...")
-                    
-                    if "data_rows" in event:
-                        print(f"    📋 Retrieved {event['data_rows']} rows")
-                    
-                    if "has_chart" in event and event["has_chart"]:
-                        print(f"    📊 Chart data available")
-                        query_result["chart"] = True
-                    
-                    if "summary" in event:
-                        print(f"    📄 Summary generated")
-                        query_result["summary"] = event["summary"]
-                    
-                    if "followup_questions" in event:
-                        print(f"    ❓ Generated {len(event['followup_questions'])} follow-up questions")
-                        query_result["followup_questions"] = event["followup_questions"]
-                    
-                    # This is a completion event, so break
-                    break
-                
-                # Handle individual step events
+                # Handle specific events
                 if event_type == "sql_generated" or event_type == "sql_validated":
                     if "sql" in event:
                         query_result["sql"] = event["sql"]
@@ -505,48 +667,28 @@ async def track_query_progress(client: Tex2SQLClient, session_id: str, question:
                     print(f"    📊 Chart generation skipped: {event.get('reason', 'Unknown reason')}")
                     query_result["chart_skipped"] = True
                 
-                # Legacy handling for other events
-                if "row_count" in event and event_type != "data_fetched":
-                    print(f"    📋 Retrieved {event['row_count']} rows")
-                    if "preview_data" in event:
-                        query_result["data"] = event["preview_data"]
-                    elif "data" in event:
-                        query_result["data"] = event["data"]
+                elif event_type == "query_completed":
+                    success = event.get("success", True)
+                    if success:
+                        print(f"    ✅ Query completed successfully!")
+                        
+                        # Capture any final data in the completion event
+                        for key in ["sql", "data", "chart_data", "summary", "questions"]:
+                            if key in event and not query_result.get(key.replace("_data", "")):
+                                if key == "chart_data":
+                                    query_result["chart"] = event[key]
+                                elif key == "questions":
+                                    query_result["followup_questions"] = event[key]
+                                else:
+                                    query_result[key] = event[key]
+                    else:
+                        print(f"    ❌ Query failed!")
+                        error = event.get("error", event.get("error_message", "Unknown error"))
+                        print(f"    ❗ Error: {error}")
+                        return
+                    break
                 
-                if "chart_data" in event:
-                    print(f"    📊 Chart generated")
-                    query_result["chart"] = event["chart_data"]
-                
-                if "summary" in event and event_type != "summary_generated":
-                    print(f"    📄 Summary generated")
-                    query_result["summary"] = event["summary"]
-                
-                if "questions" in event and event_type != "followup_generated":
-                    print(f"    ❓ Generated {len(event['questions'])} follow-up questions")
-                    query_result["followup_questions"] = event["questions"]
-                    
                 continue
-                
-            elif event_type == "query_completed":
-                success = event.get("success", True)
-                if success:
-                    print(f"    ✅ Query completed successfully!")
-                    
-                    # Capture any final data in the completion event
-                    for key in ["sql", "data", "chart_data", "summary", "questions"]:
-                        if key in event and not query_result.get(key.replace("_data", "")):
-                            if key == "chart_data":
-                                query_result["chart"] = event[key]
-                            elif key == "questions":
-                                query_result["followup_questions"] = event[key]
-                            else:
-                                query_result[key] = event[key]
-                else:
-                    print(f"    ❌ Query failed!")
-                    error = event.get("error", event.get("error_message", "Unknown error"))
-                    print(f"    ❗ Error: {error}")
-                    return
-                break
                 
             elif event_type in ["query_error", "error"]:
                 print(f"    ❌ Query failed!")
@@ -561,7 +703,6 @@ async def track_query_progress(client: Tex2SQLClient, session_id: str, question:
                 continue
                 
             else:
-                # Handle any other event types
                 if "message" in event:
                     print(f"    📝 {event['message']}")
                 
@@ -575,7 +716,6 @@ async def track_query_progress(client: Tex2SQLClient, session_id: str, question:
                             print(f"    ❗ Error: {event['error_message']}")
                         return
                         
-                # Print unknown events for debugging
                 print(f"    🔍 Unknown event data: {json.dumps(event, indent=2)}")
     
     except Exception as e:
@@ -609,16 +749,11 @@ async def track_query_progress(client: Tex2SQLClient, session_id: str, question:
         print(f"\n📊 Chart data received from API:")
         try:
             if PLOTLY_AVAILABLE:
-                # Handle Plotly chart data from your API
                 import plotly.graph_objects as go
                 from plotly.offline import plot
                 
                 chart_data = query_result["chart"]
-                
-                # Recreate the Plotly figure from JSON
                 fig = go.Figure(chart_data)
-                
-                # Display the chart
                 plot(fig, filename='temp_chart.html', auto_open=True)
                 print(f"    ✅ Plotly chart opened in browser!")
                 
@@ -628,109 +763,6 @@ async def track_query_progress(client: Tex2SQLClient, session_id: str, question:
                 
         except Exception as e:
             print(f"    ❌ Error displaying Plotly chart: {e}")
-            # Fallback to showing chart data structure
-            print(f"    Chart data keys: {list(query_result['chart'].keys()) if isinstance(query_result['chart'], dict) else 'Not a dict'}")
-    
-    elif query_result.get("chart_skipped"):
-        print(f"\n📊 Chart generation was skipped by the API")
-        
-        # Create our own chart since API didn't generate one
-        if query_result["data"] and len(query_result["data"]) > 1:
-            try:
-                if MATPLOTLIB_AVAILABLE:
-                    import matplotlib.pyplot as plt
-                    import pandas as pd
-                    
-                    # Convert data to DataFrame
-                    df = pd.DataFrame(query_result["data"])
-                    
-                    # Convert string numbers to actual numbers
-                    for col in df.columns:
-                        if col.lower() not in ['year', 'date', 'time'] and df[col].dtype == 'object':
-                            try:
-                                df[col] = pd.to_numeric(df[col], errors='ignore')
-                            except:
-                                pass
-                    
-                    print(f"    📊 Creating fallback chart with matplotlib...")
-                    
-                    # Special handling for Year/Value data (like your construction sector query)
-                    if 'Year' in df.columns and len(df.columns) == 2:
-                        value_col = [col for col in df.columns if col != 'Year'][0]
-                        
-                        plt.figure(figsize=(12, 8))
-                        
-                        # Convert values to billions for better readability
-                        values = df[value_col].astype(float) / 1e9
-                        years = df['Year'].astype(str)
-                        
-                        # Create bar chart with trend line
-                        bars = plt.bar(years, values, alpha=0.7, color=['#1f77b4', '#ff7f0e', '#2ca02c'])
-                        plt.plot(years, values, 'ro-', linewidth=2, markersize=8)
-                        
-                        # Add value labels on bars
-                        for i, (year, value) in enumerate(zip(years, values)):
-                            plt.text(i, value + max(values) * 0.02, f'${value:.1f}B', 
-                                    ha='center', va='bottom', fontweight='bold')
-                        
-                        plt.title('Construction Sector Market Value Over Time', fontsize=16, fontweight='bold')
-                        plt.xlabel('Year', fontsize=12)
-                        plt.ylabel('Total Market Value (Billions USD)', fontsize=12)
-                        plt.grid(True, alpha=0.3)
-                        
-                        # Color bars based on trend
-                        for i, bar in enumerate(bars):
-                            if i > 0:
-                                if values.iloc[i] > values.iloc[i-1]:
-                                    bar.set_color('#2ca02c')  # Green for increase
-                                else:
-                                    bar.set_color('#d62728')  # Red for decrease
-                        
-                        plt.tight_layout()
-                        plt.show()
-                        print(f"    ✅ Fallback chart displayed successfully!")
-                        
-                        # Also show trend analysis
-                        print(f"\n📈 Trend Analysis:")
-                        for i in range(1, len(values)):
-                            change = values.iloc[i] - values.iloc[i-1]
-                            pct_change = (change / values.iloc[i-1]) * 100
-                            direction = "📈" if change > 0 else "📉"
-                            print(f"    {years.iloc[i-1]} → {years.iloc[i]}: {direction} ${change:+.1f}B ({pct_change:+.1f}%)")
-                    
-                    elif len(df.select_dtypes(include=['number']).columns) >= 1:
-                        # Generic chart for other data types
-                        numeric_cols = df.select_dtypes(include=['number']).columns
-                        
-                        plt.figure(figsize=(10, 6))
-                        
-                        if len(numeric_cols) >= 2:
-                            # Scatter plot
-                            plt.scatter(df[numeric_cols[0]], df[numeric_cols[1]], alpha=0.6, s=100)
-                            plt.xlabel(str(numeric_cols[0]))
-                            plt.ylabel(str(numeric_cols[1]))
-                            plt.title(f'{numeric_cols[0]} vs {numeric_cols[1]}')
-                        else:
-                            # Bar chart
-                            x_vals = range(len(df))
-                            plt.bar(x_vals, df[numeric_cols[0]])
-                            plt.xlabel('Records')
-                            plt.ylabel(str(numeric_cols[0]))
-                            plt.title(f'{numeric_cols[0]} Distribution')
-                        
-                        plt.grid(True, alpha=0.3)
-                        plt.tight_layout()
-                        plt.show()
-                        print(f"    ✅ Fallback chart displayed successfully!")
-                
-                else:
-                    print(f"    📊 Install matplotlib and pandas for fallback charts:")
-                    print(f"    pip install matplotlib pandas")
-                    
-            except Exception as e:
-                print(f"    📊 Could not create fallback chart: {e}")
-    else:
-        print(f"\n📊 No chart generated for this query")
     
     if query_result["followup_questions"]:
         print(f"\n❓ Follow-up questions:")
@@ -744,6 +776,19 @@ if __name__ == "__main__":
     
     if len(sys.argv) != 2:
         print("Usage: python tex2sql_client.py <config_file.json>")
+        print("\nConfig file should contain:")
+        print("{")
+        print('  "connection_name": "your_connection_name",')
+        print('  "server": "localhost,1433",')
+        print('  "database_name": "your_database",')
+        print('  "db_username": "database_user",')
+        print('  "db_password": "database_password",')
+        print('  "table_name": "your_table",')
+        print('  "driver": "ODBC Driver 18 for SQL Server",')
+        print('  "username": "app_username",')
+        print('  "password": "app_password",')
+        print('  "email": "user@example.com"')
+        print("}")
         sys.exit(1)
     
     config_file = sys.argv[1]

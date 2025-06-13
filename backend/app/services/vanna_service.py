@@ -13,82 +13,14 @@ import httpx
 from app.models.vanna_models import VannaConfig, DatabaseConfig, VannaTrainingData
 from app.models.database import Connection, ConnectionStatus
 from app.config import settings
+from app.core.vanna_wrapper import MyVanna
+from app.models.database import User
 
 logger = logging.getLogger(__name__)
 
-class MyVanna(OpenAI_Chat, ChromaDB_VectorStore):
-    """Custom Vanna implementation for MS SQL Server"""
-    
-    def __init__(self, config=None):
-        # Initialize OpenAI client
-        client = openai.OpenAI(
-            base_url=config.get("base_url", settings.OPENAI_BASE_URL),
-            api_key=config.get("api_key", settings.OPENAI_API_KEY),
-            http_client=httpx.Client(verify=False)
-        )
-        
-        OpenAI_Chat.__init__(self, config=config, client=client)
-        ChromaDB_VectorStore.__init__(self, config=config)
-        
-        # Set dialect for MS SQL Server
-        self.dialect = "Microsoft SQL Server"
-    
-    def get_sql_prompt(
-        self,
-        initial_prompt: str,
-        question: str,
-        question_sql_list: list,
-        ddl_list: list,
-        doc_list: list,
-        **kwargs,
-    ):
-        """Custom SQL prompt for MS SQL Server"""
-        
-        if initial_prompt is None:
-            initial_prompt = f"You are a {self.dialect} expert. " + \
-            "Please help to generate a SQL query to answer the question. Your response should ONLY be based on the given context and follow the response guidelines and format instructions. "
-
-        initial_prompt = self.add_ddl_to_prompt(
-            initial_prompt, ddl_list, max_tokens=self.max_tokens
-        )
-
-        if self.static_documentation != "":
-            doc_list.append(self.static_documentation)
-
-        initial_prompt = self.add_documentation_to_prompt(
-            initial_prompt, doc_list, max_tokens=self.max_tokens
-        )
-
-        initial_prompt += (
-            "===Response Guidelines \n"
-            "1. If the provided context is sufficient, please generate a valid SQL query without any explanations for the question. \n"
-            "2. If the provided context is almost sufficient but requires knowledge of a specific string in a particular column, please generate an intermediate SQL query to find the distinct strings in that column. Prepend the query with a comment saying intermediate_sql \n"
-            "3. If the provided context is insufficient, please explain why it can't be generated. \n"
-            "4. Please use the most relevant table(s). \n"
-            "5. If the question has been asked and answered before, please repeat the answer exactly as it was given before. \n"
-            f"6. Ensure that the output SQL is {self.dialect}-compliant and executable, and free of syntax errors. \n"
-        )
-
-        message_log = [self.system_message(initial_prompt)]
-
-        for example in question_sql_list:
-            if example is not None and "question" in example and "sql" in example:
-                message_log.append(self.user_message(example["question"]))
-                message_log.append(self.assistant_message(example["sql"]))
-
-        if history := kwargs.get("chat_history"):
-            for h in history:
-                if h["role"] == "assistant":
-                    message_log.append(self.assistant_message(h["content"]))
-                elif h["role"] == "user":
-                    message_log.append(self.user_message(h["content"]))
-
-        message_log.append(self.user_message(question))
-
-        return message_log
 
 class VannaService:
-    """Service for managing Vanna AI instances and training"""
+    """Service for managing Vanna AI instances and training with user context"""
     
     def __init__(self):
         self.data_dir = settings.DATA_DIR
@@ -99,11 +31,15 @@ class VannaService:
         db_config: DatabaseConfig, 
         vanna_config: VannaConfig,
         retrain: bool = True,
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[callable] = None,
+        user: Optional[User] = None
     ) -> Optional[MyVanna]:
-        """Setup and train Vanna instance"""
+        """Setup and train Vanna instance with optional user context"""
         
         try:
+            user_info = f" for user {user.email}" if user else ""
+            logger.info(f"Starting Vanna setup for connection {connection_id}{user_info}")
+            
             if progress_callback:
                 await progress_callback(10, "Initializing Vanna instance...")
             
@@ -115,7 +51,7 @@ class VannaService:
                 if progress_callback:
                     await progress_callback(15, "Clearing existing training data...")
                 shutil.rmtree(chromadb_dir)
-                logger.info(f"Cleared existing ChromaDB for connection {connection_id}")
+                logger.info(f"Cleared existing ChromaDB for connection {connection_id}{user_info}")
             
             # Initialize Vanna
             vn = MyVanna(config={
@@ -132,19 +68,21 @@ class VannaService:
             odbc_conn_str = db_config.to_odbc_connection_string()
             vn.connect_to_mssql(odbc_conn_str=odbc_conn_str)
             
-            logger.info(f"Vanna connected to database for connection {connection_id}")
+            logger.info(f"Vanna connected to database for connection {connection_id}{user_info}")
             
             # Load and train with data
             if retrain:
-                await self._train_vanna_instance(vn, connection_id, progress_callback)
+                await self._train_vanna_instance(vn, connection_id, progress_callback, user)
             
             if progress_callback:
                 await progress_callback(100, "Vanna setup and training completed")
             
+            logger.info(f"Vanna setup completed successfully for connection {connection_id}{user_info}")
             return vn
             
         except Exception as e:
-            logger.error(f"Failed to setup Vanna for connection {connection_id}: {e}")
+            error_msg = f"Failed to setup Vanna for connection {connection_id}{user_info}: {e}"
+            logger.error(error_msg)
             if progress_callback:
                 await progress_callback(0, f"Setup failed: {str(e)}")
             return None
@@ -153,9 +91,12 @@ class VannaService:
         self, 
         vn: MyVanna, 
         connection_id: str, 
-        progress_callback: Optional[Callable] = None
+        progress_callback: Optional[callable] = None,
+        user: Optional[User] = None
     ):
         """Train Vanna instance with generated data"""
+        
+        user_info = f" for user {user.email}" if user else ""
         
         # Load training data
         training_data_path = os.path.join(
@@ -163,16 +104,22 @@ class VannaService:
         )
         
         if not os.path.exists(training_data_path):
-            raise FileNotFoundError("Training data not found. Please generate data first.")
+            raise FileNotFoundError(f"Training data not found for connection {connection_id}. Please generate data first.")
         
         if progress_callback:
             await progress_callback(30, "Loading training data...")
         
-        with open(training_data_path, 'r') as f:
-            training_data = json.load(f)
+        try:
+            with open(training_data_path, 'r') as f:
+                training_data = json.load(f)
+        except Exception as e:
+            raise ValueError(f"Failed to load training data: {e}")
         
         documentation = training_data.get('documentation', [])
         examples = training_data.get('examples', [])
+        
+        # Log training info with user context
+        logger.info(f"Training Vanna with {len(documentation)} docs and {len(examples)} examples for connection {connection_id}{user_info}")
         
         total_items = len(documentation) + len(examples)
         current_item = 0
@@ -207,22 +154,25 @@ class VannaService:
         if progress_callback:
             await progress_callback(95, "Training completed, saving model...")
         
-        logger.info(f"Vanna training completed for connection {connection_id}")
+        logger.info(f"Vanna training completed for connection {connection_id}{user_info}")
     
     def get_vanna_instance(
         self, 
         connection_id: str, 
         db_config: DatabaseConfig, 
-        vanna_config: VannaConfig
+        vanna_config: VannaConfig,
+        user: Optional[User] = None
     ) -> Optional[MyVanna]:
         """Get existing Vanna instance (no caching - always create fresh)"""
+        
+        user_info = f" for user {user.email}" if user else ""
         
         try:
             # Check if ChromaDB exists
             chromadb_dir = os.path.join(self.data_dir, "connections", connection_id, "chromadb_store")
             
             if not os.path.exists(chromadb_dir):
-                logger.warning(f"No trained model found for connection {connection_id}")
+                logger.warning(f"No trained model found for connection {connection_id}{user_info}")
                 return None
             
             # Create fresh instance
@@ -237,102 +187,70 @@ class VannaService:
             odbc_conn_str = db_config.to_odbc_connection_string()
             vn.connect_to_mssql(odbc_conn_str=odbc_conn_str)
             
-            logger.info(f"Created fresh Vanna instance for connection {connection_id}")
+            logger.info(f"Vanna instance loaded successfully for connection {connection_id}{user_info}")
             return vn
             
         except Exception as e:
-            logger.error(f"Failed to get Vanna instance for connection {connection_id}: {e}")
+            logger.error(f"Failed to get Vanna instance for connection {connection_id}{user_info}: {e}")
             return None
     
-    def validate_vanna_instance(self, vn: MyVanna) -> Dict[str, Any]:
-        """Validate Vanna instance health"""
-        validation_result = {
-            "is_valid": False,
-            "connection_successful": False,
-            "chromadb_accessible": False,
-            "llm_accessible": False,
-            "error_messages": []
-        }
-        
-        try:
-            # Test database connection
-            try:
-                test_result = vn.run_sql("SELECT 1 as test")
-                validation_result["connection_successful"] = test_result is not None
-            except Exception as e:
-                validation_result["error_messages"].append(f"Database connection failed: {str(e)}")
-            
-            # Test ChromaDB access
-            try:
-                # Try to get some data from ChromaDB (this will fail gracefully if empty)
-                vn.get_related_documentation("test")
-                validation_result["chromadb_accessible"] = True
-            except Exception as e:
-                validation_result["error_messages"].append(f"ChromaDB access failed: {str(e)}")
-            
-            # Test LLM access
-            try:
-                # Try to generate a simple question
-                questions = vn.generate_questions()
-                validation_result["llm_accessible"] = isinstance(questions, list)
-            except Exception as e:
-                validation_result["error_messages"].append(f"LLM access failed: {str(e)}")
-            
-            # Overall validation
-            validation_result["is_valid"] = (
-                validation_result["connection_successful"] and 
-                validation_result["chromadb_accessible"] and 
-                validation_result["llm_accessible"]
-            )
-            
-        except Exception as e:
-            validation_result["error_messages"].append(f"Validation error: {str(e)}")
-        
-        return validation_result
-    
-    def get_vanna_statistics(self, connection_id: str) -> Dict[str, Any]:
-        """Get statistics about a Vanna instance"""
+    def validate_user_access_to_connection(
+        self, 
+        connection_id: str, 
+        user: User
+    ) -> bool:
+        """Validate that user has access to the connection's Vanna model"""
         try:
             chromadb_dir = os.path.join(self.data_dir, "connections", connection_id, "chromadb_store")
+            
+            if not os.path.exists(chromadb_dir):
+                logger.warning(f"No Vanna model found for connection {connection_id}")
+                return False
+            
+            # Check if training data includes user info (for connections created after user system)
             training_data_path = os.path.join(self.data_dir, "connections", connection_id, "generated_training_data.json")
             
-            stats = {
-                "connection_id": connection_id,
-                "has_chromadb": os.path.exists(chromadb_dir),
-                "has_training_data": os.path.exists(training_data_path),
-                "chromadb_size": 0,
-                "training_examples": 0,
-                "documentation_entries": 0
-            }
-            
-            # Get ChromaDB directory size
-            if stats["has_chromadb"]:
-                try:
-                    total_size = 0
-                    for dirpath, dirnames, filenames in os.walk(chromadb_dir):
-                        for filename in filenames:
-                            filepath = os.path.join(dirpath, filename)
-                            total_size += os.path.getsize(filepath)
-                    stats["chromadb_size"] = total_size
-                except Exception as e:
-                    logger.warning(f"Could not calculate ChromaDB size: {e}")
-            
-            # Get training data statistics
-            if stats["has_training_data"]:
+            if os.path.exists(training_data_path):
                 try:
                     with open(training_data_path, 'r') as f:
                         training_data = json.load(f)
                     
-                    stats["training_examples"] = len(training_data.get('examples', []))
-                    stats["documentation_entries"] = len(training_data.get('documentation', []))
+                    # If training data has user_id, verify it matches
+                    if 'user_id' in training_data:
+                        return training_data['user_id'] == str(user.id)
+                    
                 except Exception as e:
-                    logger.warning(f"Could not read training data: {e}")
+                    logger.warning(f"Could not validate training data ownership: {e}")
             
-            return stats
+            # For legacy connections without user info in training data, allow access
+            # The connection ownership will be verified at the database level
+            return True
             
         except Exception as e:
-            logger.error(f"Failed to get Vanna statistics: {e}")
-            return {"connection_id": connection_id, "error": str(e)}
+            logger.error(f"Error validating user access to connection {connection_id}: {e}")
+            return False
+    
+    def cleanup_connection_model(self, connection_id: str, user: Optional[User] = None) -> bool:
+        """Clean up Vanna model files for a connection"""
+        user_info = f" for user {user.email}" if user else ""
+        
+        try:
+            chromadb_dir = os.path.join(self.data_dir, "connections", connection_id, "chromadb_store")
+            
+            if os.path.exists(chromadb_dir):
+                shutil.rmtree(chromadb_dir)
+                logger.info(f"Cleaned up Vanna model for connection {connection_id}{user_info}")
+            
+            training_data_path = os.path.join(self.data_dir, "connections", connection_id, "generated_training_data.json")
+            if os.path.exists(training_data_path):
+                os.remove(training_data_path)
+                logger.info(f"Cleaned up training data for connection {connection_id}{user_info}")
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to cleanup Vanna model for connection {connection_id}{user_info}: {e}")
+            return False
 
 # Global vanna service instance
 vanna_service = VannaService()
