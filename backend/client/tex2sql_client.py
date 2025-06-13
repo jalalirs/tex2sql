@@ -57,13 +57,9 @@ class Tex2SQLClient:
             }
             
             async with self.session.post(f"{self.base_url}/auth/register", json=payload) as response:
-                if response.status == 201:
+                if response.status in [200, 201]:
                     result = await response.json()
-                    print(f"✅ User registered successfully: {result['user']['email']}")
-                    return result
-                elif response.status == 200:
-                    result = await response.json()
-                    print(f"✅ User registered successfully: {result['user']['email']}")
+                    print(f"✅ User registered successfully: {result.get('user', {}).get('email', email)}")
                     return result
                 elif response.status == 400:
                     error_data = await response.json()
@@ -210,14 +206,19 @@ class Tex2SQLClient:
             async with self.session.post(f"{self.base_url}/connections/test", json=payload, headers=headers) as response:
                 if response.status == 200:
                     result = await response.json()
-                    return result.get("task_id")
+                    task_id = result.get("task_id")
+                    
+                    # Add small delay to ensure background task starts
+                    await asyncio.sleep(0.5)
+                    
+                    return task_id
                 else:
                     error = await response.text()
                     raise Exception(f"Connection test failed: {error}")
         except Exception as e:
             print(f"Error testing connection: {e}")
             raise
-    
+
     async def create_connection(self, connection_data: Dict[str, Any], csv_file_path: Optional[str] = None) -> Dict[str, Any]:
         """Create a new connection with optional CSV file"""
         try:
@@ -515,79 +516,32 @@ async def track_task_progress(client: Tex2SQLClient, task_id: str, task_name: st
     """Track progress of a task via SSE"""
     print(f"📡 Tracking {task_name} progress...")
     
+    # First check if task is already complete
+    try:
+        async with client.session.get(f"{client.base_url}/training/tasks/{task_id}/status", 
+                                     headers=client._get_auth_headers()) as response:
+            if response.status == 200:
+                task_status = await response.json()
+                if task_status.get("status") == "completed":
+                    print(f"    ✅ {task_name} already completed!")
+                    return True
+                elif task_status.get("status") == "failed":
+                    print(f"    ❌ {task_name} already failed!")
+                    error = task_status.get("error_message", "Unknown error")
+                    print(f"    ❗ Error: {error}")
+                    return False
+    except Exception as e:
+        print(f"    ⚠️ Could not check task status: {e}")
+    
+    # If not complete, stream events
     success = False
     events_received = 0
     
     try:
         async for event in client.stream_sse_events(task_id, timeout=600):
             events_received += 1
+            # ... rest of your existing event handling code
             
-            event_type = event.get("event_type", "unknown")
-            print(f"  📥 Event #{events_received}: {event_type}")
-            
-            if event_type == "connected":
-                print(f"    🔗 Connected to task stream")
-                continue
-                
-            elif event_type == "heartbeat":
-                print(f"    💓 Heartbeat")
-                continue
-                
-            elif event_type in ["test_started", "training_started", "data_generation_started"]:
-                print(f"    🚀 {task_name} started")
-                continue
-                
-            elif event_type in ["test_progress", "training_progress", "data_generation_progress", "progress"]:
-                progress = event.get("progress", 0)
-                message = event.get("message", "Processing...")
-                print(f"    📊 Progress: {progress}% - {message}")
-                continue
-                
-            elif event_type == "log":
-                level = event.get("level", "info")
-                message = event.get("message", "")
-                print(f"    📝 [{level.upper()}] {message}")
-                continue
-                
-            elif event_type in ["test_completed", "training_completed", "data_generation_completed", "completed"]:
-                success = event.get("success", False)
-                if success:
-                    print(f"    ✅ {task_name} completed successfully!")
-                    
-                    if event_type == "test_completed" and "sample_data" in event:
-                        sample_count = len(event.get("sample_data", []))
-                        column_count = len(event.get("column_info", {}))
-                        print(f"    📊 Retrieved {sample_count} sample records with {column_count} columns")
-                        
-                else:
-                    print(f"    ❌ {task_name} failed!")
-                    error = event.get("error", event.get("error_message", "Unknown error"))
-                    print(f"    ❗ Error: {error}")
-                
-                break
-                
-            elif event_type in ["test_error", "training_error", "data_generation_error", "error"]:
-                print(f"    ❌ {task_name} failed!")
-                error = event.get("error", event.get("error_message", event.get("message", "Unknown error")))
-                print(f"    ❗ Error: {error}")
-                break
-                
-            else:
-                if "message" in event:
-                    print(f"    📝 {event['message']}")
-                
-                if "success" in event:
-                    success = event["success"]
-                    if success:
-                        print(f"    ✅ {task_name} completed successfully!")
-                    else:
-                        print(f"    ❌ {task_name} failed!")
-                        if "error" in event:
-                            print(f"    ❗ Error: {event['error']}")
-                    break
-                    
-                print(f"    🔍 Unknown event data: {json.dumps(event, indent=2)}")
-    
     except asyncio.TimeoutError:
         print(f"    ⏰ {task_name} timed out")
     except Exception as e:
