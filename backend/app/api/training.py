@@ -263,7 +263,8 @@ async def _run_model_training(connection_id: str, task_id: str, db: AsyncSession
             database_name=connection.database_name,
             username=connection.username,  # NOW WORKS: Raw Connection has username
             password=connection.password,  # NOW WORKS: Raw Connection has password
-            table_name=connection.table_name
+            table_name=connection.table_name,
+            driver=connection.driver or "ODBC Driver 17 for SQL Server"  # Use default if not set
         )
         
         # Progress callback for SSE updates

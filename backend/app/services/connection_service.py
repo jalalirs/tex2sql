@@ -39,9 +39,10 @@ class ConnectionService:
                 database_name=connection_data.database_name,
                 username=connection_data.username,
                 password=connection_data.password,
-                table_name=connection_data.table_name
+                table_name=connection_data.table_name,
+                driver=connection_data.driver if hasattr(connection_data, 'driver') else None
             )
-            
+                        
             # Test connection
             conn_str = db_config.to_odbc_connection_string()
             
@@ -234,6 +235,7 @@ class ConnectionService:
                 username=connection_data.username,
                 password=connection_data.password,  # TODO: Encrypt in production
                 table_name=connection_data.table_name,
+                driver=getattr(connection_data, 'driver', None),  # Include optional driver
                 status=ConnectionStatus.TEST_SUCCESS,
                 column_descriptions_uploaded=bool(column_descriptions)
             )
@@ -253,7 +255,8 @@ class ConnectionService:
                 "database_name": connection_data.database_name,
                 "username": connection_data.username,
                 "password": connection_data.password,
-                "table_name": connection_data.table_name
+                "table_name": connection_data.table_name,
+                "driver": getattr(connection_data, 'driver', None)  # Include driver in config
             }
             
             config_path = os.path.join(connection_dir, "db_config.json")
@@ -290,6 +293,7 @@ class ConnectionService:
                 server=connection.server,
                 database_name=connection.database_name,
                 table_name=connection.table_name,
+                driver=connection.driver,  # Include driver in response
                 status=connection.status,
                 test_successful=connection.test_successful,
                 column_descriptions_uploaded=connection.column_descriptions_uploaded,

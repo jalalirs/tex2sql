@@ -25,7 +25,7 @@ except ImportError:
 class Tex2SQLClient:
     """Client for interacting with Tex2SQL API"""
     
-    def __init__(self, base_url: str = "http://localhost:8000"):
+    def __init__(self, base_url: str = "http://localhost:6020"):
         self.base_url = base_url.rstrip('/')
         self.session = None
     
@@ -232,7 +232,8 @@ async def process_connection_workflow(config_file: str):
         "database_name": config["database_name"],
         "username": config["username"],
         "password": config["password"],
-        "table_name": config["table_name"]
+        "table_name": config["table_name"],
+        "driver": config.get("driver", "ODBC Driver 17 for SQL Server")
     }
     
     print(f"🚀 Starting workflow for connection: {connection_name}")
@@ -311,7 +312,7 @@ async def process_connection_workflow(config_file: str):
             await track_task_progress(client, task_id, "Model Training")
         
         # Query the database
-        question = "what is the market value over time for the construction sector"
+        question = "Compare the salaries of the employees"
         print(f"❓ Querying: {question}")
         session_id = await client.query_database(connection_id, question)
         await track_query_progress(client, session_id, question)

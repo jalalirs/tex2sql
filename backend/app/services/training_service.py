@@ -136,13 +136,14 @@ class TrainingService:
     async def _analyze_database_schema(self, db_config: Dict[str, Any], sse_logger: SSELogger) -> Dict[str, Any]:
         """Analyze database schema (adapted from generate_data.py)"""
         await sse_logger.info("Connecting to database for schema analysis...")
-        
+        driver = db_config.get('driver', 'ODBC Driver 17 for SQL Server')
         conn_str = (
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"DRIVER={driver};"
             f"SERVER={db_config['server']};"
             f"DATABASE={db_config['database_name']};"
             f"UID={db_config['username']};"
-            f"PWD={db_config['password']}"
+            f"PWD={db_config['password']};"
+            f"TrustServerCertificate=yes"
         )
         
         try:

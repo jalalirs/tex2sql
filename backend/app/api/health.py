@@ -198,8 +198,10 @@ async def vanna_health_check(connection_id: str, db: AsyncSession = Depends(get_
                     database_name=connection.database_name,
                     username=connection.username,
                     password=connection.password,
-                    table_name=connection.table_name
+                    table_name=connection.table_name,
+                    driver=connection.driver if hasattr(connection, 'driver') else None
                 )
+                
                 
                 vanna_instance = vanna_service.get_vanna_instance(
                     connection_id, db_config, vanna_config

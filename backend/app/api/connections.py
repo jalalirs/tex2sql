@@ -115,6 +115,7 @@ async def create_connection(
     username: str = Form(...),
     password: str = Form(...),
     table_name: str = Form(...),
+    driver: Optional[str] = Form(None),  # Optional driver field
     column_descriptions_file: Optional[UploadFile] = File(None),
     db: AsyncSession = Depends(get_db),
     _: bool = Depends(validate_api_key)
@@ -128,7 +129,8 @@ async def create_connection(
             database_name=database_name,
             username=username,
             password=password,
-            table_name=table_name
+            table_name=table_name,
+            driver=driver  # Include the optional driver
         )
         
         # Validate connection data

@@ -96,6 +96,91 @@ class ConnectionValidator:
             return False
         
         return True
+    
+    @staticmethod
+    def validate_driver(driver: str) -> bool:
+        """Validate database driver name"""
+        if not driver or len(driver.strip()) == 0:
+            return False
+        
+        driver = driver.strip()
+        
+        # Common SQL Server drivers
+        valid_drivers = [
+            "ODBC Driver 18 for SQL Server",
+            "ODBC Driver 17 for SQL Server",
+            "ODBC Driver 13 for SQL Server",
+            "ODBC Driver 11 for SQL Server",
+            "SQL Server Native Client 11.0",
+            "SQL Server Native Client 10.0",
+            "SQL Server",
+            "FreeTDS"
+        ]
+        
+        # Check if it's a known valid driver
+        if driver in valid_drivers:
+            return True
+        
+        # Allow custom drivers that follow reasonable naming patterns
+        # Should contain letters, numbers, spaces, dots, and common driver keywords
+        if not re.match(r'^[a-zA-Z0-9\s.()_-]+$', driver):
+            return False
+        
+        # Must contain some indication it's a driver
+        driver_keywords = ['driver', 'client', 'odbc', 'native', 'sql', 'freetds']
+        driver_lower = driver.lower()
+        
+        if any(keyword in driver_lower for keyword in driver_keywords):
+            return True
+        
+        return False
+    
+    @staticmethod
+    def get_available_drivers() -> List[str]:
+        """Get list of available ODBC drivers on the system"""
+        try:
+            drivers = pyodbc.drivers()
+            # Filter for SQL Server related drivers
+            sql_drivers = [d for d in drivers if 'sql' in d.lower() or 'odbc' in d.lower()]
+            return sql_drivers
+        except Exception as e:
+            logger.warning(f"Could not retrieve ODBC drivers: {e}")
+            return []
+    
+    @staticmethod
+    def is_driver_available(driver: str) -> bool:
+        """Check if a specific driver is available on the system"""
+        try:
+            available_drivers = pyodbc.drivers()
+            return driver in available_drivers
+        except Exception as e:
+            logger.warning(f"Could not check driver availability: {e}")
+            return False
+    
+    @staticmethod
+    def get_recommended_driver() -> Optional[str]:
+        """Get the recommended driver based on what's available"""
+        recommended_order = [
+            "ODBC Driver 18 for SQL Server",
+            "ODBC Driver 17 for SQL Server", 
+            "ODBC Driver 13 for SQL Server",
+            "ODBC Driver 11 for SQL Server",
+            "SQL Server Native Client 11.0",
+            "SQL Server Native Client 10.0"
+        ]
+        
+        available_drivers = ConnectionValidator.get_available_drivers()
+        
+        for driver in recommended_order:
+            if driver in available_drivers:
+                return driver
+        
+        # Return the first available SQL Server driver
+        sql_drivers = [d for d in available_drivers if 'sql' in d.lower()]
+        if sql_drivers:
+            return sql_drivers[0]
+        
+        return None
 
 class SQLValidator:
     """Validate SQL queries"""
@@ -212,4 +297,40 @@ def validate_connection_data(connection_data) -> List[str]:
     if not connection_data.password or len(connection_data.password.strip()) == 0:
         errors.append("Password is required")
     
+    # Validate driver (optional)
+    if hasattr(connection_data, 'driver') and connection_data.driver:
+        # Only validate if driver is provided and not empty
+        if connection_data.driver.strip():  # Check if not just whitespace
+            if not ConnectionValidator.validate_driver(connection_data.driver):
+                errors.append("Invalid driver name")
+            elif not ConnectionValidator.is_driver_available(connection_data.driver):
+                errors.append(f"Driver '{connection_data.driver}' is not available on this system")
+    
     return errors
+
+def get_driver_validation_info(driver: str = None) -> Dict[str, Any]:
+    """Get comprehensive driver validation information"""
+    available_drivers = ConnectionValidator.get_available_drivers()
+    recommended_driver = ConnectionValidator.get_recommended_driver()
+    
+    result = {
+        "available_drivers": available_drivers,
+        "recommended_driver": recommended_driver,
+        "driver_count": len(available_drivers),
+        "driver_optional": True  # Indicate that driver is optional
+    }
+    
+    if driver and driver.strip():  # Only validate if driver is provided and not empty
+        result.update({
+            "provided_driver": driver,
+            "is_valid": ConnectionValidator.validate_driver(driver),
+            "is_available": ConnectionValidator.is_driver_available(driver)
+        })
+    else:
+        result.update({
+            "provided_driver": None,
+            "will_use_default": True,
+            "note": "No driver specified, system will use default available driver"
+        })
+    
+    return result

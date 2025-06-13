@@ -194,7 +194,8 @@ class ChatService:
                 database_name=connection.database_name,
                 username=connection.username,
                 password=connection.password,  # TODO: Decrypt in production
-                table_name=connection.table_name
+                table_name=connection.table_name,
+                driver=connection.driver
             )
             
             vanna_instance = vanna_service.get_vanna_instance(
