@@ -3,6 +3,8 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Database, CheckCircle, AlertCircle, Clock, Zap, Play, Upload, Settings } from 'lucide-react';
 import { Connection } from '../types/chat';
 import { chatService } from '../services/chat';
+import { sseConnection } from '../services/sse';
+
 
 
 type TabType = 'details' | 'schema' | 'column-descriptions' | 'training-data' | 'training';
@@ -1152,45 +1154,73 @@ const TrainingDataTab: React.FC<{ connection: Connection }> = ({ connection }) =
       const result = await response.json();
       console.log('Data generation started:', result);
 
-      // FIXED: Better polling logic
-      const pollForCompletion = async () => {
-        let attempts = 0;
-        const maxAttempts = 30;
-        
-        while (attempts < maxAttempts) {
-          await new Promise(resolve => setTimeout(resolve, 1000));
+      // Connect to SSE stream if available
+      if (result.stream_url) {
+        sseConnection.connect(result.stream_url, {
+          onProgress: (data) => {
+            console.log('Generation progress:', data);
+            // Could show progress bar here
+          },
           
-          try {
-            // Check training data endpoint directly
-            const trainingResponse = await fetch(`http://localhost:6020/connections/${connection.id}/training-data`);
-            if (trainingResponse.ok) {
-              // Training data exists, generation is complete
-              await loadTrainingData();
-              setGenerating(false);
-              return;
+          onCustomEvent: (eventType, data) => {
+            if (eventType === 'data_generation_started') {
+              console.log('Generation started:', data);
+            } else if (eventType === 'example_generated') {
+              console.log('New example generated:', data);
+              // Could show real-time examples being generated
             }
+          },
+          
+          onCompleted: async (data) => {
+            console.log('Generation completed:', data);
+            setGenerating(false);
+            await loadTrainingData();
+          },
+          
+          onError: (data) => {
+            console.error('Generation failed:', data);
+            setError(data.error || 'Data generation failed');
+            setGenerating(false);
+          }
+        });
+      } else {
+        // Fallback: Poll for completion if no SSE
+        const pollForCompletion = async () => {
+          let attempts = 0;
+          const maxAttempts = 30;
+          
+          while (attempts < maxAttempts) {
+            await new Promise(resolve => setTimeout(resolve, 1000));
             
-            // Also check connection status as backup
-            const connResponse = await fetch(`http://localhost:6020/connections/${connection.id}`);
-            if (connResponse.ok) {
-              const connData = await connResponse.json();
-              if (connData.status === 'data_generated' && connData.generated_examples_count > 0) {
+            try {
+              const trainingResponse = await fetch(`http://localhost:6020/connections/${connection.id}/training-data`);
+              if (trainingResponse.ok) {
                 await loadTrainingData();
                 setGenerating(false);
                 return;
               }
+              
+              const connResponse = await fetch(`http://localhost:6020/connections/${connection.id}`);
+              if (connResponse.ok) {
+                const connData = await connResponse.json();
+                if (connData.status === 'data_generated' && connData.generated_examples_count > 0) {
+                  await loadTrainingData();
+                  setGenerating(false);
+                  return;
+                }
+              }
+            } catch (e) {
+              console.log('Polling attempt failed, continuing...', e);
             }
-          } catch (e) {
-            console.log('Polling attempt failed, continuing...', e);
+            
+            attempts++;
           }
           
-          attempts++;
-        }
-        
-        throw new Error('Data generation timed out');
-      };
+          throw new Error('Data generation timed out');
+        };
 
-      await pollForCompletion();
+        await pollForCompletion();
+      }
       
     } catch (err: any) {
       console.error('Data generation failed:', err);
@@ -1379,64 +1409,102 @@ const TrainingTab: React.FC<{ connection: Connection; onConnectionUpdate: (conne
   const [training, setTraining] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+
+
   const handleStartTraining = async () => {
     setTraining(true);
     setError(null);
     
     try {
-        // FIXED: Use correct endpoint to match backend
-        const response = await fetch(`http://localhost:6020/connections/${connection.id}/train`, {
+      const response = await fetch(`http://localhost:6020/connections/${connection.id}/train`, {
         method: 'POST',
         headers: {
-            'Content-Type': 'application/json'
+          'Content-Type': 'application/json'
         }
-        });
+      });
 
-        if (!response.ok) {
+      if (!response.ok) {
         const errorData = await response.json();
         throw new Error(errorData.detail || 'Failed to start training');
-        }
+      }
 
-        const result = await response.json();
-        console.log('Training started:', result);
+      const result = await response.json();
+      console.log('Training started:', result);
 
-        // Poll for completion (same logic)
+      // Connect to SSE stream if available
+      if (result.stream_url) {
+        sseConnection.connect(result.stream_url, {
+          onProgress: (data) => {
+            console.log('Training progress:', data);
+            // Could show progress percentage here
+          },
+          
+          onCustomEvent: (eventType, data) => {
+            if (eventType === 'training_started') {
+              console.log('Training started:', data);
+            }
+          },
+          
+          onCompleted: async (data) => {
+            console.log('Training completed:', data);
+            setTraining(false);
+            
+            // Update connection status
+            try {
+              const connResponse = await fetch(`http://localhost:6020/connections/${connection.id}`);
+              if (connResponse.ok) {
+                const connData = await connResponse.json();
+                onConnectionUpdate(connData);
+              }
+            } catch (e) {
+              console.error('Failed to update connection:', e);
+            }
+          },
+          
+          onError: (data) => {
+            console.error('Training failed:', data);
+            setError(data.error || 'Training failed');
+            setTraining(false);
+          }
+        });
+      } else {
+        // Fallback: Poll for completion if no SSE
         const pollForCompletion = async () => {
-        let attempts = 0;
-        const maxAttempts = 30;
-        
-        while (attempts < maxAttempts) {
+          let attempts = 0;
+          const maxAttempts = 30;
+          
+          while (attempts < maxAttempts) {
             await new Promise(resolve => setTimeout(resolve, 1000));
             
             try {
-            const connResponse = await fetch(`http://localhost:6020/connections/${connection.id}`);
-            if (connResponse.ok) {
+              const connResponse = await fetch(`http://localhost:6020/connections/${connection.id}`);
+              if (connResponse.ok) {
                 const connData = await connResponse.json();
                 if (connData.status === 'trained') {
-                onConnectionUpdate(connData);
-                setTraining(false);
-                return;
+                  onConnectionUpdate(connData);
+                  setTraining(false);
+                  return;
                 }
-            }
+              }
             } catch (e) {
-            // Continue polling
+              // Continue polling
             }
             
             attempts++;
-        }
-        
-        throw new Error('Training timed out');
+          }
+          
+          throw new Error('Training timed out');
         };
 
         await pollForCompletion();
-        
+      }
+      
     } catch (err: any) {
-        console.error('Training failed:', err);
-        setError(err.message);
-        setTraining(false);
+      console.error('Training failed:', err);
+      setError(err.message);
+      setTraining(false);
     }
-    };
-
+  };
   // Fixed logic: Can train with test_success status (no data generation required)
   const canTrain = ['test_success', 'data_generated'].includes(connection.status) || connection.status === 'trained';
 

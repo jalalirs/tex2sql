@@ -113,11 +113,15 @@ export const ChatMain: React.FC<ChatMainProps> = ({
     setLoading(true);
 
     try {
-      // Send query to API
-      const response = await chatService.sendQuery(message, activeConversation === 'new' ? undefined : activeConversation || undefined);
+      // Send query to API with connection_id
+      const response = await chatService.sendQuery(
+        message, 
+        activeConversation === 'new' ? undefined : activeConversation || undefined,
+        selectedConnection.id
+      );
       console.log('Query response:', response);
       
-      // Create initial AI message with just content
+      // Create initial AI message
       const aiMessageId = Date.now() + 1;
       const initialAiMessage = {
         id: aiMessageId,
@@ -128,77 +132,155 @@ export const ChatMain: React.FC<ChatMainProps> = ({
       
       setMessages(prev => [...prev, initialAiMessage]);
       
-      // Step 1: Update with processing message (500ms)
-      setTimeout(() => {
-        setMessages(prev => prev.map(msg => 
-          msg.id === aiMessageId 
-            ? { ...msg, content: "I'll help you with that query. Let me generate the SQL..." }
-            : msg
-        ));
-      }, 500);
-      
-      // Step 2: Add SQL (1500ms)
-      setTimeout(() => {
-        setMessages(prev => prev.map(msg => 
-          msg.id === aiMessageId 
-            ? { 
-                ...msg, 
-                content: "I'll help you with that query. Let me generate the SQL and fetch the results.",
-                sql: "SELECT TOP 10 ProductName, SUM(Quantity * UnitPrice) as Revenue\nFROM OrderDetails od\nJOIN Products p ON od.ProductID = p.ProductID\nWHERE OrderDate >= DATEADD(month, -1, GETDATE())\nGROUP BY ProductName\nORDER BY Revenue DESC"
-              }
-            : msg
-        ));
-      }, 1500);
-      
-      // Step 3: Add data (2500ms)
-      setTimeout(() => {
-        setMessages(prev => prev.map(msg => 
-          msg.id === aiMessageId 
-            ? { 
-                ...msg,
-                data: [
-                  { ProductName: "Chai", Revenue: 12485.50 },
-                  { ProductName: "Chang", Revenue: 11438.25 },
-                  { ProductName: "Aniseed Syrup", Revenue: 9567.00 },
-                  { ProductName: "Guaraná Fantástica", Revenue: 8234.75 }
-                ]
-              }
-            : msg
-        ));
-      }, 2500);
-      
-      // Step 4: Add chart (3500ms)
-      setTimeout(() => {
-        setMessages(prev => prev.map(msg => 
-          msg.id === aiMessageId 
-            ? { 
-                ...msg,
-                chart: {
-                  type: 'bar',
-                  title: 'Top Products by Revenue (Last Month)',
-                  data: [12485.50, 11438.25, 9567.00, 8234.75],
-                  labels: ['Chai', 'Chang', 'Aniseed Syrup', 'Guaraná Fantástica']
+      // Connect to SSE stream
+      if (response.session_id && response.stream_url) {
+        const eventSource = new EventSource(response.stream_url);
+        
+        eventSource.onopen = () => {
+          console.log('SSE connection opened');
+        };
+        
+        eventSource.addEventListener('query_progress', (event) => {
+          const data = JSON.parse(event.data);
+          console.log('Query progress:', data);
+          
+          // Update message content based on progress
+          setMessages(prev => prev.map(msg => 
+            msg.id === aiMessageId 
+              ? { ...msg, content: data.message || data.step || "Processing..." }
+              : msg
+          ));
+        });
+        
+        eventSource.addEventListener('sql_generated', (event) => {
+          const data = JSON.parse(event.data);
+          console.log('SQL generated:', data);
+          
+          setMessages(prev => prev.map(msg => 
+            msg.id === aiMessageId 
+              ? { 
+                  ...msg, 
+                  content: "I'll help you with that query. Let me generate the SQL and fetch the results.",
+                  sql: data.sql
                 }
-              }
-            : msg
-        ));
-      }, 3500);
-      
-      // Step 5: Add summary and complete (4500ms)
-      setTimeout(() => {
+              : msg
+          ));
+        });
+        
+        eventSource.addEventListener('data_fetched', (event) => {
+          const data = JSON.parse(event.data);
+          console.log('Data fetched:', data);
+          
+          setMessages(prev => prev.map(msg => 
+            msg.id === aiMessageId 
+              ? { 
+                  ...msg,
+                  data: data.query_results?.data || data.data
+                }
+              : msg
+          ));
+        });
+        
+        eventSource.addEventListener('chart_generated', (event) => {
+          const data = JSON.parse(event.data);
+          console.log('Chart generated:', data);
+          
+          setMessages(prev => prev.map(msg => 
+            msg.id === aiMessageId 
+              ? { 
+                  ...msg,
+                  chart: data.chart_data || data.chart
+                }
+              : msg
+          ));
+        });
+        
+        eventSource.addEventListener('query_completed', (event) => {
+          const data = JSON.parse(event.data);
+          console.log('Query completed:', data);
+          
+          setMessages(prev => prev.map(msg => 
+            msg.id === aiMessageId 
+              ? { 
+                  ...msg,
+                  summary: {
+                    title: "Query Results",
+                    insights: [
+                      data.summary || `Query executed on ${selectedConnection.name}`,
+                      `Found ${data.row_count || 0} results`,
+                      `Execution time: ${data.execution_time || 0}ms`
+                    ],
+                    recommendation: "Ask follow-up questions to explore your data further."
+                  }
+                }
+              : msg
+          ));
+          
+          setLoading(false);
+          eventSource.close();
+          
+          // Handle new conversation
+          if (data.is_new_conversation || response.is_new_conversation) {
+            console.log('New conversation created:', data.conversation_id || response.conversation_id);
+            onConversationCreated(data.conversation_id || response.conversation_id);
+          }
+        });
+        
+        eventSource.addEventListener('query_error', (event) => {
+          const data = JSON.parse(event.data);
+          console.error('Query error:', data);
+          
+          setMessages(prev => prev.map(msg => 
+            msg.id === aiMessageId 
+              ? { 
+                  ...msg,
+                  content: `Error: ${data.error || 'Failed to process query'}`
+                }
+              : msg
+          ));
+          
+          setLoading(false);
+          eventSource.close();
+        });
+        
+        eventSource.onerror = (error) => {
+          console.error('SSE error:', error);
+          setLoading(false);
+          eventSource.close();
+          
+          // Add error message
+          const errorMessage = {
+            id: Date.now() + 2,
+            type: 'assistant',
+            content: "Connection lost. Please try again.",
+            timestamp: new Date()
+          };
+          setMessages(prev => [...prev, errorMessage]);
+        };
+        
+        // Cleanup function
+        const cleanup = () => {
+          eventSource.close();
+          setLoading(false);
+        };
+        
+        // Auto-cleanup after 30 seconds
+        setTimeout(cleanup, 30000);
+        
+      } else {
+        // Fallback for immediate response (if no SSE)
         setMessages(prev => prev.map(msg => 
           msg.id === aiMessageId 
             ? { 
                 ...msg,
+                content: "I'll help you with that query. Let me generate the SQL and fetch the results.",
+                sql: response.generated_sql || `SELECT TOP 10 * FROM ${selectedConnection.table_name}`,
+                data: response.query_results?.data || [{ Message: "No SSE stream available" }],
+                chart: response.chart_data,
                 summary: {
-                  title: "Key Insights",
-                  insights: [
-                    "📈 Chai remains the top-performing product with $12,485 in monthly revenue",
-                    "📊 Top 4 products show consistent performance across categories",
-                    "💰 Strong international presence with Brazilian Guaraná in top performers",
-                    "🎯 Monthly revenue concentration suggests focused customer preferences"
-                  ],
-                  recommendation: "Consider bundling top-performing products or expanding similar product lines to capitalize on these trends."
+                  title: "Query Results",
+                  insights: [response.summary || "Query completed"],
+                  recommendation: "Ask follow-up questions to explore your data further."
                 }
               }
             : msg
@@ -206,12 +288,10 @@ export const ChatMain: React.FC<ChatMainProps> = ({
         
         setLoading(false);
         
-        // If this was a new conversation, refresh sidebar
         if (response.is_new_conversation) {
-          console.log('New conversation created:', response.conversation_id);
           onConversationCreated(response.conversation_id);
         }
-      }, 4500);
+      }
       
     } catch (error) {
       console.error('Failed to send message:', error);

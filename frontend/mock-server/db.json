@@ -16,157 +16,75 @@
   ],
   "connections": [
     {
-      "id": "conn-123",
-      "name": "Production DB",
-      "server": "localhost,1433",
-      "database_name": "TestCompanyDB",
-      "table_name": "Employees",
-      "driver": "ODBC Driver 18 for SQL Server",
-      "status": "trained",
-      "test_successful": true,
-      "column_descriptions_uploaded": true,
-      "generated_examples_count": 25,
-      "total_queries": 142,
-      "last_queried_at": "2024-12-01T10:30:00Z",
-      "created_at": "2024-11-01T00:00:00Z",
-      "trained_at": "2024-11-01T02:15:00Z",
-      "user_id": "user-123"
-    },
-    {
-      "id": "conn-456",
-      "name": "Analytics DB",
-      "server": "localhost,1433",
-      "database_name": "TestCompanyDB",
-      "table_name": "Orders",
-      "driver": "ODBC Driver 18 for SQL Server",
-      "status": "test_success",
-      "test_successful": true,
-      "column_descriptions_uploaded": false,
-      "generated_examples_count": 0,
-      "total_queries": 0,
-      "created_at": "2024-12-01T00:00:00Z",
-      "user_id": "user-123"
-    },
-    {
-      "id": "conn-1749909117491",
+      "id": "conn-1749918306195",
       "name": "employees",
       "server": "localhost,1433",
       "database_name": "TestCompanyDB",
       "table_name": "Employees",
       "driver": "ODBC Driver 18 for SQL Server",
-      "status": "data_generated",
-      "test_successful": true,
-      "column_descriptions_uploaded": false,
-      "generated_examples_count": 20,
-      "total_queries": 0,
-      "last_queried_at": null,
-      "created_at": "2025-06-14T13:51:57.491Z",
-      "trained_at": null,
-      "user_id": "user-123"
-    },
-    {
-      "id": "conn-1749912351839",
-      "name": "employees2",
-      "server": "localhost,1433",
-      "database_name": "TestCompanyDB",
-      "table_name": "Employees",
-      "driver": "ODBC Driver 18 for SQL Server",
-      "status": "test_success",
-      "test_successful": true,
-      "column_descriptions_uploaded": false,
-      "generated_examples_count": 0,
-      "total_queries": 0,
-      "last_queried_at": null,
-      "created_at": "2025-06-14T14:45:51.839Z",
-      "trained_at": null,
-      "user_id": "user-123"
-    },
-    {
-      "id": "conn-1749912901546",
-      "name": "employees3",
-      "server": "localhost,1433",
-      "database_name": "TestCompanyDB",
-      "table_name": "Employees",
-      "driver": "ODBC Driver 18 for SQL Server",
-      "status": "data_generated",
-      "test_successful": true,
-      "column_descriptions_uploaded": false,
-      "generated_examples_count": 20,
-      "total_queries": 0,
-      "last_queried_at": null,
-      "created_at": "2025-06-14T14:55:01.546Z",
-      "trained_at": null,
-      "user_id": "user-123"
-    },
-    {
-      "id": "conn-1749916171447",
-      "name": "employees5",
-      "server": "localhost,1433",
-      "database_name": "TestCompanyDB",
-      "table_name": "Employees",
-      "driver": "ODBC Driver 18 for SQL Server",
       "status": "trained",
       "test_successful": true,
       "column_descriptions_uploaded": false,
       "generated_examples_count": 20,
       "total_queries": 0,
       "last_queried_at": null,
-      "created_at": "2025-06-14T15:49:31.447Z",
-      "trained_at": "2025-06-14T15:53:45.409Z",
+      "created_at": "2025-06-14T16:25:06.195Z",
+      "trained_at": "2025-06-14T16:26:03.629Z",
       "user_id": "user-123"
     }
   ],
   "conversations": [
     {
-      "id": "conv-123",
-      "connection_id": "conn-123",
-      "connection_name": "Production DB",
-      "title": "Employee Analysis Q1",
-      "description": "Analyzing Q1 employee performance",
+      "id": "conv-1749918372880",
+      "connection_id": "conn-1749918306195",
+      "connection_name": "employees",
+      "title": "hi",
+      "description": null,
+      "user_id": "user-123",
       "is_active": true,
       "is_pinned": false,
       "connection_locked": true,
-      "message_count": 8,
-      "total_queries": 4,
-      "created_at": "2024-11-15T00:00:00Z",
-      "updated_at": "2024-11-15T14:30:00Z",
-      "last_message_at": "2024-11-15T14:30:00Z",
-      "latest_message": "Show me top performing employees",
-      "user_id": "user-123"
+      "message_count": 2,
+      "total_queries": 1,
+      "created_at": "2025-06-14T16:26:12.880Z",
+      "updated_at": "2025-06-14T16:26:12.880Z",
+      "last_message_at": "2025-06-14T16:26:12.880Z",
+      "latest_message": "hi"
     },
     {
-      "id": "conv-456",
-      "connection_id": "conn-123",
-      "connection_name": "Production DB",
-      "title": "Department Analysis",
+      "id": "conv-1749918461206",
+      "connection_id": "conn-1749918306195",
+      "connection_name": "employees",
+      "title": "what is life?",
+      "description": null,
+      "user_id": "user-123",
       "is_active": true,
-      "is_pinned": true,
+      "is_pinned": false,
       "connection_locked": true,
-      "message_count": 12,
-      "total_queries": 6,
-      "created_at": "2024-11-10T00:00:00Z",
-      "updated_at": "2024-11-14T16:45:00Z",
-      "last_message_at": "2024-11-14T16:45:00Z",
-      "latest_message": "What's the average salary by department?",
-      "user_id": "user-123"
+      "message_count": 2,
+      "total_queries": 1,
+      "created_at": "2025-06-14T16:27:41.206Z",
+      "updated_at": "2025-06-14T16:27:41.206Z",
+      "last_message_at": "2025-06-14T16:27:41.206Z",
+      "latest_message": "what is life?"
     }
   ],
   "messages": [
     {
-      "id": "msg-123",
-      "conversation_id": "conv-123",
-      "content": "Show me the top 10 employees by salary",
+      "id": "msg-user-1749918372880",
+      "conversation_id": "conv-1749918372880",
+      "content": "hi",
       "message_type": "user",
       "is_edited": false,
-      "created_at": "2024-11-15T14:25:00Z",
-      "updated_at": "2024-11-15T14:25:00Z"
+      "created_at": "2025-06-14T16:26:12.880Z",
+      "updated_at": "2025-06-14T16:26:12.880Z"
     },
     {
-      "id": "msg-124",
-      "conversation_id": "conv-123",
-      "content": "I'll analyze the top employees by salary for you.",
+      "id": "msg-ai-1749918380388",
+      "conversation_id": "conv-1749918372880",
+      "content": "I'll help you with that query. Let me generate the SQL and fetch the results.",
       "message_type": "assistant",
-      "generated_sql": "SELECT TOP 10 EmployeeName, Department, Salary FROM Employees ORDER BY Salary DESC",
+      "generated_sql": "SELECT Department, COUNT(*) as EmployeeCount FROM Employees GROUP BY Department",
       "query_results": {
         "data": [
           {
@@ -185,15 +103,15 @@
             "Salary": 75000
           }
         ],
-        "row_count": 10
+        "row_count": 3
       },
       "chart_data": {
         "type": "bar",
-        "title": "Top Employees by Salary",
+        "title": "Query Results",
         "data": [
-          95000,
-          85000,
-          75000
+          "Engineering",
+          "Marketing",
+          "Sales"
         ],
         "labels": [
           "John Smith",
@@ -201,14 +119,130 @@
           "Bob Johnson"
         ]
       },
-      "summary": "John Smith leads with the highest salary at $95,000 in Engineering, followed by Jane Doe in Marketing at $85,000.",
-      "execution_time": 245,
-      "row_count": 10,
-      "tokens_used": 156,
+      "summary": "Query executed successfully on employees. Found 3 results.",
+      "execution_time": 99,
+      "row_count": 3,
+      "tokens_used": 146,
       "model_used": "gpt-4",
       "is_edited": false,
-      "created_at": "2024-11-15T14:30:00Z",
-      "updated_at": "2024-11-15T14:30:00Z"
+      "created_at": "2025-06-14T16:26:20.388Z",
+      "updated_at": "2025-06-14T16:26:20.388Z"
+    },
+    {
+      "id": "msg-user-1749918404405",
+      "conversation_id": "conv-1749918372880",
+      "content": "what is life?",
+      "message_type": "user",
+      "is_edited": false,
+      "created_at": "2025-06-14T16:26:44.405Z",
+      "updated_at": "2025-06-14T16:26:44.405Z"
+    },
+    {
+      "id": "msg-ai-1749918411907",
+      "conversation_id": "conv-1749918372880",
+      "content": "I'll help you with that query. Let me generate the SQL and fetch the results.",
+      "message_type": "assistant",
+      "generated_sql": "SELECT Department, AVG(Salary) as AvgSalary FROM Employees GROUP BY Department",
+      "query_results": {
+        "data": [
+          {
+            "EmployeeName": "John Smith",
+            "Department": "Engineering",
+            "Salary": 95000
+          },
+          {
+            "EmployeeName": "Jane Doe",
+            "Department": "Marketing",
+            "Salary": 85000
+          },
+          {
+            "EmployeeName": "Bob Johnson",
+            "Department": "Sales",
+            "Salary": 75000
+          }
+        ],
+        "row_count": 3
+      },
+      "chart_data": {
+        "type": "bar",
+        "title": "Query Results",
+        "data": [
+          "Engineering",
+          "Marketing",
+          "Sales"
+        ],
+        "labels": [
+          "John Smith",
+          "Jane Doe",
+          "Bob Johnson"
+        ]
+      },
+      "summary": "Query executed successfully on employees. Found 3 results.",
+      "execution_time": 228,
+      "row_count": 3,
+      "tokens_used": 205,
+      "model_used": "gpt-4",
+      "is_edited": false,
+      "created_at": "2025-06-14T16:26:51.907Z",
+      "updated_at": "2025-06-14T16:26:51.907Z"
+    },
+    {
+      "id": "msg-user-1749918461206",
+      "conversation_id": "conv-1749918461206",
+      "content": "what is life?",
+      "message_type": "user",
+      "is_edited": false,
+      "created_at": "2025-06-14T16:27:41.206Z",
+      "updated_at": "2025-06-14T16:27:41.206Z"
+    },
+    {
+      "id": "msg-ai-1749918468712",
+      "conversation_id": "conv-1749918461206",
+      "content": "I'll help you with that query. Let me generate the SQL and fetch the results.",
+      "message_type": "assistant",
+      "generated_sql": "SELECT Department, COUNT(*) as EmployeeCount FROM Employees GROUP BY Department",
+      "query_results": {
+        "data": [
+          {
+            "EmployeeName": "John Smith",
+            "Department": "Engineering",
+            "Salary": 95000
+          },
+          {
+            "EmployeeName": "Jane Doe",
+            "Department": "Marketing",
+            "Salary": 85000
+          },
+          {
+            "EmployeeName": "Bob Johnson",
+            "Department": "Sales",
+            "Salary": 75000
+          }
+        ],
+        "row_count": 3
+      },
+      "chart_data": {
+        "type": "bar",
+        "title": "Query Results",
+        "data": [
+          "Engineering",
+          "Marketing",
+          "Sales"
+        ],
+        "labels": [
+          "John Smith",
+          "Jane Doe",
+          "Bob Johnson"
+        ]
+      },
+      "summary": "Query executed successfully on employees. Found 3 results.",
+      "execution_time": 167,
+      "row_count": 3,
+      "tokens_used": 155,
+      "model_used": "gpt-4",
+      "is_edited": false,
+      "created_at": "2025-06-14T16:27:48.712Z",
+      "updated_at": "2025-06-14T16:27:48.712Z"
     }
   ],
   "auth_tokens": [

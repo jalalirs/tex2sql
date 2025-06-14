@@ -1,5 +1,5 @@
 import { api } from './auth';
-import { Connection, Conversation, Message } from '../types/chat';
+import { Connection, Conversation } from '../types/chat';
 
 export const chatService = {
   // Get user's connections (determined by token)
@@ -30,11 +30,12 @@ export const chatService = {
     return response.data;
   },
 
-  // Send message/query
-  async sendQuery(question: string, conversationId?: string) {
+  // Send message/query - FIXED: Added connection_id parameter
+  async sendQuery(question: string, conversationId?: string, connectionId?: string) {
     const response = await api.post('/conversations/query', {
       question,
-      conversation_id: conversationId
+      conversation_id: conversationId,
+      connection_id: connectionId // Add connection_id to request
     });
     return response.data;
   }
