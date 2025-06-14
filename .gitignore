@@ -192,6 +192,8 @@ ipython_config.py
 # PEP 582; used by e.g. github.com/David-OConnor/pyflow and github.com/pdm-project/pdm
 __pypackages__/
 
+**/node_modules/
+
 # Celery stuff
 celerybeat-schedule
 celerybeat.pid
@@ -370,3 +372,5 @@ temp_chart.html
 api_keys.py
 config_local.py
 local_settings.py
+
+# Node modules in any directory
