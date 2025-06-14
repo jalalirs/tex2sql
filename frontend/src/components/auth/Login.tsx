@@ -9,8 +9,8 @@ interface LoginProps {
 export const Login: React.FC<LoginProps> = ({ onSwitchToRegister }) => {
   const { login, loading } = useAuth();
   const [formData, setFormData] = useState<LoginRequest>({
-    email: '',
-    password: '',
+    email: 'test@example.com',
+    password: 'Password123',
   });
   const [error, setError] = useState('');
 
