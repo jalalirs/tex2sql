@@ -301,6 +301,268 @@ async def delete_connection(
             detail=f"Failed to delete connection: {str(e)}"
         )
 
+# Add these new endpoints to app/api/connections.py
+
+@router.post("/{connection_id}/refresh-schema")
+async def refresh_connection_schema(
+    connection_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(validate_api_key)
+):
+    """Refresh and store schema information for user's connection"""
+    try:
+        # Check if connection exists and belongs to user
+        connection = await connection_service.get_user_connection(db, current_user.id, connection_id)
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Connection not found or access denied"
+            )
+        
+        # Create task for tracking
+        task_id = str(uuid.uuid4())
+        task = TrainingTask(
+            id=task_id,
+            connection_id=connection_id,
+            user_id=current_user.id,
+            task_type="refresh_schema",
+            status="running"
+        )
+        
+        db.add(task)
+        await db.commit()
+        
+        # Start schema refresh in background
+        background_tasks.add_task(
+            _run_schema_refresh,
+            connection_id,
+            task_id,
+            current_user,
+            db
+        )
+        
+        return TaskResponse(
+            task_id=task_id,
+            connection_id=connection_id,
+            task_type="refresh_schema",
+            status="running",
+            progress=0,
+            stream_url=f"/events/stream/{task_id}",
+            created_at=task.created_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start schema refresh: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start schema refresh: {str(e)}"
+        )
+
+@router.get("/{connection_id}/schema")
+async def get_connection_schema(
+    connection_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get stored schema information for user's connection"""
+    try:
+        # Check if connection exists and belongs to user
+        connection = await connection_service.get_user_connection(db, current_user.id, connection_id)
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Connection not found or access denied"
+            )
+        
+        # Get schema from storage
+        schema_data = await connection_service.get_connection_schema(connection_id)
+        
+        if not schema_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Schema not found. Try refreshing the schema first."
+            )
+        
+        return {
+            "connection_id": connection_id,
+            "connection_name": connection.name,
+            "schema": schema_data,
+            "last_refreshed": schema_data.get("last_refreshed"),
+            "total_columns": len(schema_data.get("columns", {}))
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get schema for connection {connection_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get schema: {str(e)}"
+        )
+
+@router.get("/{connection_id}/column-descriptions")
+async def get_column_descriptions(
+    connection_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get column descriptions for user's connection"""
+    try:
+        # Check if connection exists and belongs to user
+        connection = await connection_service.get_user_connection(db, current_user.id, connection_id)
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Connection not found or access denied"
+            )
+        
+        # Get column descriptions from database and files
+        column_descriptions = await connection_service.get_column_descriptions(db, connection_id)
+        
+        return {
+            "connection_id": connection_id,
+            "connection_name": connection.name,
+            "column_descriptions": column_descriptions,
+            "total_columns": len(column_descriptions),
+            "has_descriptions": any(desc.get("description") for desc in column_descriptions)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get column descriptions for {connection_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get column descriptions: {str(e)}"
+        )
+
+@router.put("/{connection_id}/column-descriptions")
+async def update_column_descriptions(
+    connection_id: str,
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(validate_api_key)
+):
+    """Update column descriptions for user's connection"""
+    try:
+        # Check if connection exists and belongs to user
+        connection = await connection_service.get_user_connection(db, current_user.id, connection_id)
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Connection not found or access denied"
+            )
+        
+        # Process and validate CSV file
+        try:
+            column_descriptions = await file_handler.process_column_descriptions_csv(file)
+            logger.info(f"Processed {len(column_descriptions)} column descriptions")
+        except Exception as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Error processing CSV file: {str(e)}"
+            )
+        
+        # Update column descriptions in database and storage
+        success = await connection_service.update_column_descriptions(
+            db, connection_id, column_descriptions
+        )
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update column descriptions"
+            )
+        
+        # Update connection flag
+        await connection_service.update_connection_column_descriptions_flag(
+            db, connection_id, True
+        )
+        
+        return {
+            "success": True,
+            "message": f"Updated descriptions for {len(column_descriptions)} columns",
+            "connection_id": connection_id,
+            "total_columns": len(column_descriptions)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update column descriptions: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update column descriptions: {str(e)}"
+        )
+
+# Background task for schema refresh
+async def _run_schema_refresh(
+    connection_id: str,
+    task_id: str,
+    user: User,
+    db: AsyncSession
+):
+    """Background task to refresh schema"""
+    try:
+        await _update_task_status(db, task_id, "running", 0)
+        
+        # Get connection details
+        connection = await connection_service.get_connection_by_id(db, connection_id)
+        if not connection:
+            raise ValueError("Connection not found")
+        
+        # Verify user ownership
+        if str(connection.user_id) != str(user.id):
+            raise ValueError("Access denied: Connection does not belong to user")
+        
+        # Create connection data for schema analysis
+        connection_data = ConnectionCreate(
+            name=connection.name,
+            server=connection.server,
+            database_name=connection.database_name,
+            username=connection.username,
+            password=connection.password,
+            table_name=connection.table_name,
+            driver=connection.driver
+        )
+        
+        # Run schema refresh
+        result = await connection_service.refresh_connection_schema(
+            connection_data, connection_id, task_id
+        )
+        
+        if result.success:
+            await _update_task_status(db, task_id, "completed", 100)
+            await sse_manager.send_to_task(task_id, "schema_refresh_completed", {
+                "success": True,
+                "connection_id": connection_id,
+                "total_columns": len(result.column_info) if result.column_info else 0,
+                "task_id": task_id
+            })
+        else:
+            await _update_task_status(db, task_id, "failed", 0, result.error_message)
+            await sse_manager.send_to_task(task_id, "schema_refresh_failed", {
+                "success": False,
+                "error": result.error_message,
+                "task_id": task_id
+            })
+            
+    except Exception as e:
+        error_msg = f"Schema refresh failed: {str(e)}"
+        logger.error(error_msg)
+        await _update_task_status(db, task_id, "failed", 0, error_msg)
+        await sse_manager.send_to_task(task_id, "schema_refresh_failed", {
+            "success": False,
+            "error": error_msg,
+            "task_id": task_id
+        })
+
+
 @router.post("/{connection_id}/validate-csv")
 async def validate_column_descriptions_csv(
     connection_id: str,
@@ -342,6 +604,7 @@ async def validate_column_descriptions_csv(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"CSV validation failed: {str(e)}"
         )
+
 
 async def _update_task_status(db: AsyncSession, task_id: str, status: str, progress: int, error_message: str = None):
     """Helper to update task status"""

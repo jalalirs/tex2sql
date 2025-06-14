@@ -183,6 +183,51 @@ class ConnectionDeleteResponse(BaseModel):
     success: bool
     message: str
 
+# Add these schemas to app/models/schemas.py
+
+class SchemaRefreshResponse(BaseModel):
+    """Response for schema refresh operation"""
+    task_id: str
+    connection_id: str
+    status: str
+    stream_url: str
+    message: str = "Schema refresh started"
+
+class ConnectionSchemaResponse(BaseModel):
+    """Response for connection schema"""
+    connection_id: str
+    connection_name: str
+    schema: Dict[str, Any]
+    last_refreshed: Optional[str]
+    total_columns: int
+
+class ColumnInfo(BaseModel):
+    """Column information with all details"""
+    column_name: str
+    data_type: str
+    variable_range: str = ""
+    description: str = ""
+    has_description: bool = False
+    categories: Optional[List[str]] = None
+    range: Optional[Dict[str, float]] = None
+    date_range: Optional[Dict[str, str]] = None
+
+class ColumnDescriptionsResponse(BaseModel):
+    """Response for column descriptions"""
+    connection_id: str
+    connection_name: str
+    column_descriptions: List[ColumnInfo]
+    total_columns: int
+    has_descriptions: bool
+
+class UpdateColumnDescriptionsResponse(BaseModel):
+    """Response for updating column descriptions"""
+    success: bool
+    message: str
+    connection_id: str
+    total_columns: int
+
+
 
 # ========================
 # CONVERSATION & MESSAGE SCHEMAS
@@ -387,6 +432,7 @@ class TaskResponse(BaseModel):
     progress: int
     stream_url: str
     created_at: datetime
+
 
     class Config:
         from_attributes = True

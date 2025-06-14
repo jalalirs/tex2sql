@@ -9,6 +9,13 @@ const middlewares = jsonServer.defaults();
 server.use(middlewares);
 server.use(jsonServer.bodyParser);
 
+// Add these new endpoints to your mock-server/server.js
+
+// Mock storage for schemas (in production this would be files)
+const mockSchemas = new Map();
+const mockColumnDescriptions = new Map();
+
+
 // Helper function to test MSSQL connection
 function testSQLConnection(connectionData) {
   return new Promise((resolve, reject) => {
@@ -471,6 +478,277 @@ server.post('/conversations/query', (req, res) => {
     connection_locked: true
   });
 });
+
+// Schema refresh endpoint
+server.post('/connections/:id/refresh-schema', async (req, res) => {
+  const connectionId = req.params.id;
+  const connection = router.db.get('connections').find({ id: connectionId }).value();
+  
+  if (!connection) {
+    return res.status(404).json({ detail: 'Connection not found or access denied' });
+  }
+
+  console.log('Refreshing schema for connection:', connectionId);
+
+  try {
+    // Simulate schema refresh by testing the connection
+    const testResult = await testSQLConnection({
+      server: connection.server,
+      database_name: connection.database_name,
+      username: 'sa', // Mock username
+      password: 'l.messi10', // Mock password
+      table_name: connection.table_name
+    });
+
+    if (testResult.success) {
+      // Store schema data
+      const schemaData = {
+        connection_id: connectionId,
+        last_refreshed: new Date().toISOString(),
+        table_info: {
+          total_columns: Object.keys(testResult.columnInfo).length,
+          sample_rows: testResult.sampleData.length
+        },
+        columns: testResult.columnInfo,
+        sample_data: testResult.sampleData.slice(0, 5)
+      };
+      
+      mockSchemas.set(connectionId, schemaData);
+      
+      const taskId = `schema-refresh-${Date.now()}`;
+      
+      res.json({
+        task_id: taskId,
+        connection_id: connectionId,
+        task_type: 'refresh_schema',
+        status: 'completed',
+        progress: 100,
+        stream_url: `/events/stream/${taskId}`,
+        created_at: new Date().toISOString()
+      });
+    } else {
+      res.status(400).json({
+        detail: `Schema refresh failed: ${testResult.error}`
+      });
+    }
+  } catch (error) {
+    console.error('Schema refresh error:', error);
+    res.status(500).json({
+      detail: `Schema refresh failed: ${error.message}`
+    });
+  }
+});
+
+// Get schema endpoint
+server.get('/connections/:id/schema', (req, res) => {
+  const connectionId = req.params.id;
+  const connection = router.db.get('connections').find({ id: connectionId }).value();
+  
+  if (!connection) {
+    return res.status(404).json({ detail: 'Connection not found or access denied' });
+  }
+
+  const schemaData = mockSchemas.get(connectionId);
+  
+  if (!schemaData) {
+    return res.status(404).json({ 
+      detail: 'Schema not found. Try refreshing the schema first.' 
+    });
+  }
+
+  res.json({
+    connection_id: connectionId,
+    connection_name: connection.name,
+    schema: schemaData,
+    last_refreshed: schemaData.last_refreshed,
+    total_columns: Object.keys(schemaData.columns).length
+  });
+});
+
+// Get column descriptions endpoint
+server.get('/connections/:id/column-descriptions', (req, res) => {
+  const connectionId = req.params.id;
+  const connection = router.db.get('connections').find({ id: connectionId }).value();
+  
+  if (!connection) {
+    return res.status(404).json({ detail: 'Connection not found or access denied' });
+  }
+
+  const schemaData = mockSchemas.get(connectionId);
+  const columnDescriptions = mockColumnDescriptions.get(connectionId) || {};
+  
+  if (!schemaData) {
+    return res.json({
+      connection_id: connectionId,
+      connection_name: connection.name,
+      column_descriptions: [],
+      total_columns: 0,
+      has_descriptions: false
+    });
+  }
+
+  // Combine schema info with descriptions
+  const columnData = Object.keys(schemaData.columns).map(colName => {
+    const colInfo = schemaData.columns[colName];
+    return {
+      column_name: colName,
+      data_type: colInfo.data_type,
+      variable_range: colInfo.variable_range || `Type: ${colInfo.data_type}`,
+      description: columnDescriptions[colName] || '',
+      has_description: !!columnDescriptions[colName],
+      categories: colInfo.categories,
+      range: colInfo.range,
+      date_range: colInfo.date_range
+    };
+  });
+
+  res.json({
+    connection_id: connectionId,
+    connection_name: connection.name,
+    column_descriptions: columnData,
+    total_columns: columnData.length,
+    has_descriptions: Object.keys(columnDescriptions).length > 0
+  });
+});
+
+// Update column descriptions endpoint
+server.put('/connections/:id/column-descriptions', (req, res) => {
+  const connectionId = req.params.id;
+  const connection = router.db.get('connections').find({ id: connectionId }).value();
+  
+  if (!connection) {
+    return res.status(404).json({ detail: 'Connection not found or access denied' });
+  }
+
+  // In a real implementation, you'd parse the uploaded CSV file
+  // For mock, we'll simulate processing
+  const { columns } = req.body; // Expecting { columns: [{ column: 'name', description: 'desc' }] }
+  
+  if (!columns || !Array.isArray(columns)) {
+    return res.status(400).json({
+      detail: 'Invalid CSV format. Expected columns array.'
+    });
+  }
+
+  // Store column descriptions
+  const descriptions = {};
+  columns.forEach(col => {
+    if (col.column && col.description) {
+      descriptions[col.column] = col.description;
+    }
+  });
+
+  mockColumnDescriptions.set(connectionId, descriptions);
+
+  // Update connection flag
+  const connections = router.db.get('connections');
+  connections.find({ id: connectionId }).assign({ 
+    column_descriptions_uploaded: Object.keys(descriptions).length > 0 
+  }).write();
+
+  res.json({
+    success: true,
+    message: `Updated descriptions for ${Object.keys(descriptions).length} columns`,
+    connection_id: connectionId,
+    total_columns: Object.keys(descriptions).length
+  });
+});
+
+// CSV validation endpoint (existing one - just ensure it's there)
+server.post('/connections/:id/validate-csv', (req, res) => {
+  const connectionId = req.params.id;
+  const connection = router.db.get('connections').find({ id: connectionId }).value();
+  
+  if (!connection) {
+    return res.status(404).json({ detail: 'Connection not found or access denied' });
+  }
+
+  // Mock CSV validation - in real implementation you'd parse the file
+  const mockColumns = [
+    { column_name: 'EmployeeID', description: 'Unique identifier for employee' },
+    { column_name: 'EmployeeName', description: 'Full name of the employee' },
+    { column_name: 'Department', description: 'Department where employee works' },
+    { column_name: 'Salary', description: 'Annual salary in USD' }
+  ];
+
+  res.json({
+    valid: true,
+    column_count: mockColumns.length,
+    columns: mockColumns,
+    total_columns: mockColumns.length
+  });
+});
+
+// Initialize some mock schema data for existing connections
+function initializeMockData() {
+  const connections = router.db.get('connections').value();
+  
+  connections.forEach(conn => {
+    if (conn.id === 'conn-123') {
+      // Mock schema for Production DB
+      mockSchemas.set(conn.id, {
+        connection_id: conn.id,
+        last_refreshed: '2024-12-01T10:00:00Z',
+        table_info: {
+          total_columns: 6,
+          sample_rows: 5
+        },
+        columns: {
+          'OrderID': {
+            data_type: 'int',
+            variable_range: 'Range: 1 - 50000 (Avg: 25000)'
+          },
+          'CustomerID': {
+            data_type: 'varchar(10)',
+            variable_range: 'Type: varchar(10)',
+            categories: ['CUST001', 'CUST002', 'CUST003', 'CUST004', 'CUST005']
+          },
+          'OrderDate': {
+            data_type: 'datetime',
+            variable_range: 'Date range: 2023-01-01 to 2024-12-01',
+            date_range: { min: '2023-01-01', max: '2024-12-01' }
+          },
+          'ProductName': {
+            data_type: 'varchar(100)',
+            variable_range: 'Type: varchar(100)',
+            categories: ['Chai', 'Chang', 'Aniseed Syrup', 'Chef Anton\'s Cajun Seasoning']
+          },
+          'Quantity': {
+            data_type: 'int',
+            variable_range: 'Range: 1 - 100 (Avg: 15)',
+            range: { min: 1, max: 100, avg: 15 }
+          },
+          'UnitPrice': {
+            data_type: 'decimal(10,2)',
+            variable_range: 'Range: 5.00 - 999.99 (Avg: 125.50)',
+            range: { min: 5.00, max: 999.99, avg: 125.50 }
+          }
+        },
+        sample_data: [
+          { OrderID: 1001, CustomerID: 'CUST001', OrderDate: '2024-11-15', ProductName: 'Chai', Quantity: 10, UnitPrice: 18.00 },
+          { OrderID: 1002, CustomerID: 'CUST002', OrderDate: '2024-11-14', ProductName: 'Chang', Quantity: 5, UnitPrice: 19.00 },
+          { OrderID: 1003, CustomerID: 'CUST003', OrderDate: '2024-11-13', ProductName: 'Aniseed Syrup', Quantity: 8, UnitPrice: 10.00 },
+          { OrderID: 1004, CustomerID: 'CUST001', OrderDate: '2024-11-12', ProductName: 'Chai', Quantity: 12, UnitPrice: 18.00 },
+          { OrderID: 1005, CustomerID: 'CUST004', OrderDate: '2024-11-11', ProductName: 'Chang', Quantity: 3, UnitPrice: 19.00 }
+        ]
+      });
+
+      // Mock column descriptions for Production DB
+      mockColumnDescriptions.set(conn.id, {
+        'OrderID': 'Unique identifier for each order',
+        'CustomerID': 'Customer identification code',
+        'OrderDate': 'Date when the order was placed',
+        'ProductName': 'Name of the ordered product',
+        'Quantity': 'Number of items ordered',
+        'UnitPrice': 'Price per unit in USD'
+      });
+    }
+  });
+}
+
+// Call initialization after server setup
+setTimeout(initializeMockData, 1000);
+
 
 server.listen(6020, () => {
   console.log('Mock server running on http://localhost:6020');
