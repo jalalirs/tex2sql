@@ -6,6 +6,22 @@ const server = jsonServer.create();
 const router = jsonServer.router(path.join(__dirname, 'db.json'));
 const middlewares = jsonServer.defaults();
 
+// Add this after the middlewares in mock-server/server.js:
+
+server.use(middlewares);
+server.use(jsonServer.bodyParser);
+
+// Add CORS OPTIONS handler
+server.options('*', (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cache-Control');
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.sendStatus(200);
+});
+
+// Rest of your endpoints...
+
 server.use(middlewares);
 server.use(jsonServer.bodyParser);
 
@@ -26,13 +42,15 @@ function sendSSEEvent(res, eventType, data) {
 server.get('/events/stream/:taskId', (req, res) => {
   const taskId = req.params.taskId;
   
-  // Set SSE headers
+  // Set proper SSE headers with CORS
   res.writeHead(200, {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
     'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Headers': 'Cache-Control'
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Origin, X-Requested-With, Content-Type, Accept, Authorization, Cache-Control',
+    'Access-Control-Allow-Credentials': 'true'
   });
   
   console.log('SSE connection opened for task:', taskId);
@@ -40,23 +58,42 @@ server.get('/events/stream/:taskId', (req, res) => {
   // Store connection
   sseConnections.set(taskId, res);
   
-  // Send initial connection event
+  // Send initial connection event immediately
   sendSSEEvent(res, 'connected', { 
     task_id: taskId, 
     message: 'Connected to stream' 
   });
   
+  // Send a heartbeat to keep connection alive
+  const heartbeat = setInterval(() => {
+    if (sseConnections.has(taskId)) {
+      sendSSEEvent(res, 'heartbeat', { task_id: taskId });
+    } else {
+      clearInterval(heartbeat);
+    }
+  }, 10000);
+  
   // Handle client disconnect
   req.on('close', () => {
     console.log('SSE connection closed for task:', taskId);
     sseConnections.delete(taskId);
+    clearInterval(heartbeat);
   });
   
   req.on('error', (err) => {
     console.error('SSE connection error:', err);
     sseConnections.delete(taskId);
+    clearInterval(heartbeat);
+  });
+  
+  // Handle server shutdown
+  res.on('close', () => {
+    console.log('SSE response closed for task:', taskId);
+    sseConnections.delete(taskId);
+    clearInterval(heartbeat);
   });
 });
+
 
 // Helper function to send events to a specific task
 function sendToTask(taskId, eventType, data) {

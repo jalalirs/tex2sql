@@ -35,7 +35,7 @@
   ],
   "conversations": [
     {
-      "id": "conv-1749918372880",
+      "id": "conv-1749921927931",
       "connection_id": "conn-1749918306195",
       "connection_name": "employees",
       "title": "hi",
@@ -46,13 +46,47 @@
       "connection_locked": true,
       "message_count": 2,
       "total_queries": 1,
-      "created_at": "2025-06-14T16:26:12.880Z",
-      "updated_at": "2025-06-14T16:26:12.880Z",
-      "last_message_at": "2025-06-14T16:26:12.880Z",
+      "created_at": "2025-06-14T17:25:27.931Z",
+      "updated_at": "2025-06-14T17:25:27.931Z",
+      "last_message_at": "2025-06-14T17:25:27.931Z",
       "latest_message": "hi"
     },
     {
-      "id": "conv-1749918461206",
+      "id": "conv-1749922200043",
+      "connection_id": "conn-1749918306195",
+      "connection_name": "employees",
+      "title": "hi",
+      "description": null,
+      "user_id": "user-123",
+      "is_active": true,
+      "is_pinned": false,
+      "connection_locked": true,
+      "message_count": 2,
+      "total_queries": 1,
+      "created_at": "2025-06-14T17:30:00.043Z",
+      "updated_at": "2025-06-14T17:30:00.043Z",
+      "last_message_at": "2025-06-14T17:30:00.043Z",
+      "latest_message": "hi"
+    },
+    {
+      "id": "conv-1749922317711",
+      "connection_id": "conn-1749918306195",
+      "connection_name": "employees",
+      "title": "hi",
+      "description": null,
+      "user_id": "user-123",
+      "is_active": true,
+      "is_pinned": false,
+      "connection_locked": true,
+      "message_count": 2,
+      "total_queries": 1,
+      "created_at": "2025-06-14T17:31:57.711Z",
+      "updated_at": "2025-06-14T17:31:57.711Z",
+      "last_message_at": "2025-06-14T17:31:57.711Z",
+      "latest_message": "hi"
+    },
+    {
+      "id": "conv-1749922500222",
       "connection_id": "conn-1749918306195",
       "connection_name": "employees",
       "title": "what is life?",
@@ -63,44 +97,41 @@
       "connection_locked": true,
       "message_count": 2,
       "total_queries": 1,
-      "created_at": "2025-06-14T16:27:41.206Z",
-      "updated_at": "2025-06-14T16:27:41.206Z",
-      "last_message_at": "2025-06-14T16:27:41.206Z",
+      "created_at": "2025-06-14T17:35:00.222Z",
+      "updated_at": "2025-06-14T17:35:00.222Z",
+      "last_message_at": "2025-06-14T17:35:00.222Z",
       "latest_message": "what is life?"
     }
   ],
   "messages": [
     {
-      "id": "msg-user-1749918372880",
-      "conversation_id": "conv-1749918372880",
+      "id": "msg-user-1749921927931",
+      "conversation_id": "conv-1749921927931",
       "content": "hi",
       "message_type": "user",
       "is_edited": false,
-      "created_at": "2025-06-14T16:26:12.880Z",
-      "updated_at": "2025-06-14T16:26:12.880Z"
+      "created_at": "2025-06-14T17:25:27.931Z",
+      "updated_at": "2025-06-14T17:25:27.931Z"
     },
     {
-      "id": "msg-ai-1749918380388",
-      "conversation_id": "conv-1749918372880",
+      "id": "msg-ai-1749921935439",
+      "conversation_id": "conv-1749921927931",
       "content": "I'll help you with that query. Let me generate the SQL and fetch the results.",
       "message_type": "assistant",
-      "generated_sql": "SELECT Department, COUNT(*) as EmployeeCount FROM Employees GROUP BY Department",
+      "generated_sql": "SELECT TOP 10 * FROM Employees ORDER BY 1 DESC",
       "query_results": {
         "data": [
           {
-            "EmployeeName": "John Smith",
-            "Department": "Engineering",
-            "Salary": 95000
+            "Result": "Sample data from employees",
+            "Count": 1
           },
           {
-            "EmployeeName": "Jane Doe",
-            "Department": "Marketing",
-            "Salary": 85000
+            "Result": "Mock response",
+            "Count": 2
           },
           {
-            "EmployeeName": "Bob Johnson",
-            "Department": "Sales",
-            "Salary": 75000
+            "Result": "Training needed for better results",
+            "Count": 3
           }
         ],
         "row_count": 3
@@ -109,56 +140,273 @@
         "type": "bar",
         "title": "Query Results",
         "data": [
-          "Engineering",
-          "Marketing",
-          "Sales"
+          1,
+          2,
+          3
         ],
         "labels": [
-          "John Smith",
-          "Jane Doe",
-          "Bob Johnson"
+          "Sample data from emp",
+          "Mock response",
+          "Training needed for "
         ]
       },
       "summary": "Query executed successfully on employees. Found 3 results.",
-      "execution_time": 99,
+      "execution_time": 181,
       "row_count": 3,
-      "tokens_used": 146,
+      "tokens_used": 181,
       "model_used": "gpt-4",
       "is_edited": false,
-      "created_at": "2025-06-14T16:26:20.388Z",
-      "updated_at": "2025-06-14T16:26:20.388Z"
+      "created_at": "2025-06-14T17:25:35.439Z",
+      "updated_at": "2025-06-14T17:25:35.439Z"
     },
     {
-      "id": "msg-user-1749918404405",
-      "conversation_id": "conv-1749918372880",
+      "id": "msg-user-1749921988014",
+      "conversation_id": "conv-1749921927931",
+      "content": "hi",
+      "message_type": "user",
+      "is_edited": false,
+      "created_at": "2025-06-14T17:26:28.014Z",
+      "updated_at": "2025-06-14T17:26:28.014Z"
+    },
+    {
+      "id": "msg-ai-1749921995515",
+      "conversation_id": "conv-1749921927931",
+      "content": "I'll help you with that query. Let me generate the SQL and fetch the results.",
+      "message_type": "assistant",
+      "generated_sql": "SELECT TOP 10 * FROM Employees ORDER BY 1 DESC",
+      "query_results": {
+        "data": [
+          {
+            "Result": "Sample data from employees",
+            "Count": 1
+          },
+          {
+            "Result": "Mock response",
+            "Count": 2
+          },
+          {
+            "Result": "Training needed for better results",
+            "Count": 3
+          }
+        ],
+        "row_count": 3
+      },
+      "chart_data": {
+        "type": "bar",
+        "title": "Query Results",
+        "data": [
+          1,
+          2,
+          3
+        ],
+        "labels": [
+          "Sample data from emp",
+          "Mock response",
+          "Training needed for "
+        ]
+      },
+      "summary": "Query executed successfully on employees. Found 3 results.",
+      "execution_time": 188,
+      "row_count": 3,
+      "tokens_used": 226,
+      "model_used": "gpt-4",
+      "is_edited": false,
+      "created_at": "2025-06-14T17:26:35.515Z",
+      "updated_at": "2025-06-14T17:26:35.515Z"
+    },
+    {
+      "id": "msg-user-1749922200043",
+      "conversation_id": "conv-1749922200043",
+      "content": "hi",
+      "message_type": "user",
+      "is_edited": false,
+      "created_at": "2025-06-14T17:30:00.043Z",
+      "updated_at": "2025-06-14T17:30:00.043Z"
+    },
+    {
+      "id": "msg-ai-1749922207551",
+      "conversation_id": "conv-1749922200043",
+      "content": "I'll help you with that query. Let me generate the SQL and fetch the results.",
+      "message_type": "assistant",
+      "generated_sql": "SELECT TOP 10 * FROM Employees ORDER BY 1 DESC",
+      "query_results": {
+        "data": [
+          {
+            "Result": "Sample data from employees",
+            "Count": 1
+          },
+          {
+            "Result": "Mock response",
+            "Count": 2
+          },
+          {
+            "Result": "Training needed for better results",
+            "Count": 3
+          }
+        ],
+        "row_count": 3
+      },
+      "chart_data": {
+        "type": "bar",
+        "title": "Query Results",
+        "data": [
+          1,
+          2,
+          3
+        ],
+        "labels": [
+          "Sample data from emp",
+          "Mock response",
+          "Training needed for "
+        ]
+      },
+      "summary": "Query executed successfully on employees. Found 3 results.",
+      "execution_time": 192,
+      "row_count": 3,
+      "tokens_used": 113,
+      "model_used": "gpt-4",
+      "is_edited": false,
+      "created_at": "2025-06-14T17:30:07.551Z",
+      "updated_at": "2025-06-14T17:30:07.551Z"
+    },
+    {
+      "id": "msg-user-1749922317711",
+      "conversation_id": "conv-1749922317711",
+      "content": "hi",
+      "message_type": "user",
+      "is_edited": false,
+      "created_at": "2025-06-14T17:31:57.711Z",
+      "updated_at": "2025-06-14T17:31:57.711Z"
+    },
+    {
+      "id": "msg-ai-1749922325218",
+      "conversation_id": "conv-1749922317711",
+      "content": "I'll help you with that query. Let me generate the SQL and fetch the results.",
+      "message_type": "assistant",
+      "generated_sql": "SELECT TOP 10 * FROM Employees ORDER BY 1 DESC",
+      "query_results": {
+        "data": [
+          {
+            "Result": "Sample data from employees",
+            "Count": 1
+          },
+          {
+            "Result": "Mock response",
+            "Count": 2
+          },
+          {
+            "Result": "Training needed for better results",
+            "Count": 3
+          }
+        ],
+        "row_count": 3
+      },
+      "chart_data": {
+        "type": "bar",
+        "title": "Query Results",
+        "data": [
+          1,
+          2,
+          3
+        ],
+        "labels": [
+          "Sample data from emp",
+          "Mock response",
+          "Training needed for "
+        ]
+      },
+      "summary": "Query executed successfully on employees. Found 3 results.",
+      "execution_time": 188,
+      "row_count": 3,
+      "tokens_used": 211,
+      "model_used": "gpt-4",
+      "is_edited": false,
+      "created_at": "2025-06-14T17:32:05.218Z",
+      "updated_at": "2025-06-14T17:32:05.218Z"
+    },
+    {
+      "id": "msg-user-1749922356442",
+      "conversation_id": "conv-1749922317711",
+      "content": "hi",
+      "message_type": "user",
+      "is_edited": false,
+      "created_at": "2025-06-14T17:32:36.442Z",
+      "updated_at": "2025-06-14T17:32:36.442Z"
+    },
+    {
+      "id": "msg-ai-1749922363943",
+      "conversation_id": "conv-1749922317711",
+      "content": "I'll help you with that query. Let me generate the SQL and fetch the results.",
+      "message_type": "assistant",
+      "generated_sql": "SELECT TOP 10 * FROM Employees ORDER BY 1 DESC",
+      "query_results": {
+        "data": [
+          {
+            "Result": "Sample data from employees",
+            "Count": 1
+          },
+          {
+            "Result": "Mock response",
+            "Count": 2
+          },
+          {
+            "Result": "Training needed for better results",
+            "Count": 3
+          }
+        ],
+        "row_count": 3
+      },
+      "chart_data": {
+        "type": "bar",
+        "title": "Query Results",
+        "data": [
+          1,
+          2,
+          3
+        ],
+        "labels": [
+          "Sample data from emp",
+          "Mock response",
+          "Training needed for "
+        ]
+      },
+      "summary": "Query executed successfully on employees. Found 3 results.",
+      "execution_time": 221,
+      "row_count": 3,
+      "tokens_used": 107,
+      "model_used": "gpt-4",
+      "is_edited": false,
+      "created_at": "2025-06-14T17:32:43.943Z",
+      "updated_at": "2025-06-14T17:32:43.943Z"
+    },
+    {
+      "id": "msg-user-1749922500222",
+      "conversation_id": "conv-1749922500222",
       "content": "what is life?",
       "message_type": "user",
       "is_edited": false,
-      "created_at": "2025-06-14T16:26:44.405Z",
-      "updated_at": "2025-06-14T16:26:44.405Z"
+      "created_at": "2025-06-14T17:35:00.222Z",
+      "updated_at": "2025-06-14T17:35:00.222Z"
     },
     {
-      "id": "msg-ai-1749918411907",
-      "conversation_id": "conv-1749918372880",
+      "id": "msg-ai-1749922507729",
+      "conversation_id": "conv-1749922500222",
       "content": "I'll help you with that query. Let me generate the SQL and fetch the results.",
       "message_type": "assistant",
-      "generated_sql": "SELECT Department, AVG(Salary) as AvgSalary FROM Employees GROUP BY Department",
+      "generated_sql": "SELECT TOP 10 * FROM Employees ORDER BY 1 DESC",
       "query_results": {
         "data": [
           {
-            "EmployeeName": "John Smith",
-            "Department": "Engineering",
-            "Salary": 95000
+            "Result": "Sample data from employees",
+            "Count": 1
           },
           {
-            "EmployeeName": "Jane Doe",
-            "Department": "Marketing",
-            "Salary": 85000
+            "Result": "Mock response",
+            "Count": 2
           },
           {
-            "EmployeeName": "Bob Johnson",
-            "Department": "Sales",
-            "Salary": 75000
+            "Result": "Training needed for better results",
+            "Count": 3
           }
         ],
         "row_count": 3
@@ -167,82 +415,24 @@
         "type": "bar",
         "title": "Query Results",
         "data": [
-          "Engineering",
-          "Marketing",
-          "Sales"
+          1,
+          2,
+          3
         ],
         "labels": [
-          "John Smith",
-          "Jane Doe",
-          "Bob Johnson"
+          "Sample data from emp",
+          "Mock response",
+          "Training needed for "
         ]
       },
       "summary": "Query executed successfully on employees. Found 3 results.",
-      "execution_time": 228,
+      "execution_time": 213,
       "row_count": 3,
-      "tokens_used": 205,
+      "tokens_used": 139,
       "model_used": "gpt-4",
       "is_edited": false,
-      "created_at": "2025-06-14T16:26:51.907Z",
-      "updated_at": "2025-06-14T16:26:51.907Z"
-    },
-    {
-      "id": "msg-user-1749918461206",
-      "conversation_id": "conv-1749918461206",
-      "content": "what is life?",
-      "message_type": "user",
-      "is_edited": false,
-      "created_at": "2025-06-14T16:27:41.206Z",
-      "updated_at": "2025-06-14T16:27:41.206Z"
-    },
-    {
-      "id": "msg-ai-1749918468712",
-      "conversation_id": "conv-1749918461206",
-      "content": "I'll help you with that query. Let me generate the SQL and fetch the results.",
-      "message_type": "assistant",
-      "generated_sql": "SELECT Department, COUNT(*) as EmployeeCount FROM Employees GROUP BY Department",
-      "query_results": {
-        "data": [
-          {
-            "EmployeeName": "John Smith",
-            "Department": "Engineering",
-            "Salary": 95000
-          },
-          {
-            "EmployeeName": "Jane Doe",
-            "Department": "Marketing",
-            "Salary": 85000
-          },
-          {
-            "EmployeeName": "Bob Johnson",
-            "Department": "Sales",
-            "Salary": 75000
-          }
-        ],
-        "row_count": 3
-      },
-      "chart_data": {
-        "type": "bar",
-        "title": "Query Results",
-        "data": [
-          "Engineering",
-          "Marketing",
-          "Sales"
-        ],
-        "labels": [
-          "John Smith",
-          "Jane Doe",
-          "Bob Johnson"
-        ]
-      },
-      "summary": "Query executed successfully on employees. Found 3 results.",
-      "execution_time": 167,
-      "row_count": 3,
-      "tokens_used": 155,
-      "model_used": "gpt-4",
-      "is_edited": false,
-      "created_at": "2025-06-14T16:27:48.712Z",
-      "updated_at": "2025-06-14T16:27:48.712Z"
+      "created_at": "2025-06-14T17:35:07.729Z",
+      "updated_at": "2025-06-14T17:35:07.729Z"
     }
   ],
   "auth_tokens": [

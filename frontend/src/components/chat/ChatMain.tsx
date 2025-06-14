@@ -28,6 +28,7 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   const [conversationData, setConversationData] = useState<any>(null);
   const [connections, setConnections] = useState<Connection[]>([]);
   const [selectedConnection, setSelectedConnection] = useState<Connection | null>(null);
+  const [justCreatedConversation, setJustCreatedConversation] = useState<string | null>(null);
 
   // Load connections on mount
   useEffect(() => {
@@ -46,14 +47,25 @@ export const ChatMain: React.FC<ChatMainProps> = ({
 
   // Load conversation messages when activeConversation changes
   useEffect(() => {
+    console.log('useEffect triggered - activeConversation:', activeConversation, 'justCreatedConversation:', justCreatedConversation);
+    
     if (activeConversation && activeConversation !== 'new') {
+      // Don't reload if we just created this conversation (messages are already in state)
+      if (justCreatedConversation === activeConversation) {
+        console.log('✅ Skipping reload for just-created conversation - keeping existing messages');
+        setJustCreatedConversation(null); // Reset the flag
+        return;
+      }
+      console.log('📥 Loading conversation messages for existing conversation:', activeConversation);
       loadConversationMessages();
-    } else {
+    } else if (activeConversation === 'new') {
+      console.log('🆕 New conversation state - clearing messages');
       setMessages([]);
       setConversationData(null);
     }
+    // Note: Don't clear messages when activeConversation is null (landing page)
   }, [activeConversation]);
-
+  
   const loadConnections = async () => {
     try {
       const connectionsData = await chatService.getConnections();
@@ -98,8 +110,15 @@ export const ChatMain: React.FC<ChatMainProps> = ({
   };
 
   const handleSendMessage = async (message: string) => {
-    if (!message.trim() || loading || !selectedConnection) return;
-
+    console.log('handleSendMessage called with:', { message, loading, selectedConnection });
+    
+    if (!message.trim() || loading || !selectedConnection) {
+      console.log('Aborting send - conditions not met');
+      return;
+    }
+  
+    console.log('Proceeding with message send...');
+  
     // Add user message immediately
     const userMessage = {
       id: Date.now(),
@@ -107,11 +126,11 @@ export const ChatMain: React.FC<ChatMainProps> = ({
       content: message,
       timestamp: new Date()
     };
-
+  
     setMessages(prev => [...prev, userMessage]);
     setInputValue('');
     setLoading(true);
-
+  
     try {
       // Send query to API with connection_id
       const response = await chatService.sendQuery(
@@ -121,153 +140,210 @@ export const ChatMain: React.FC<ChatMainProps> = ({
       );
       console.log('Query response:', response);
       
-      // Create initial AI message
       const aiMessageId = Date.now() + 1;
-      const initialAiMessage = {
-        id: aiMessageId,
-        type: 'assistant',
-        content: "Processing your query...",
-        timestamp: new Date()
-      };
-      
-      setMessages(prev => [...prev, initialAiMessage]);
       
       // Connect to SSE stream
-      if (response.session_id && response.stream_url) {
-        const eventSource = new EventSource(response.stream_url);
+      // Replace the SSE connection block in handleSendMessage with this:
+
+      // Replace the entire SSE block in handleSendMessage with this fetch streaming approach:
+
+    // Replace the entire SSE block in handleSendMessage with this fetch streaming approach:
+
+    // Replace the entire SSE block in handleSendMessage with this EventSource version:
+
+if (response.session_id && response.stream_url) {
+  try {
+    console.log('Setting up EventSource connection...');
+    const fullStreamUrl = response.stream_url.startsWith('http') 
+      ? response.stream_url 
+      : `http://localhost:6020${response.stream_url}`;
+    
+    console.log('EventSource URL:', fullStreamUrl);
+    
+    const eventSource = new EventSource(fullStreamUrl);
+    console.log('EventSource created, readyState:', eventSource.readyState);
+    
+    let connected = false;
+    
+    eventSource.onopen = () => {
+      console.log('✅ EventSource opened successfully');
+      connected = true;
+    };
+    
+    eventSource.onmessage = (event) => {
+      console.log('📨 EventSource message:', event);
+      try {
+        const data = JSON.parse(event.data);
+        console.log('📨 Parsed data:', data);
         
-        eventSource.onopen = () => {
-          console.log('SSE connection opened');
-        };
-        
-        eventSource.addEventListener('query_progress', (event) => {
-          const data = JSON.parse(event.data);
-          console.log('Query progress:', data);
-          
-          // Update message content based on progress
+        // Handle generic data updates (fallback)
+        if (data.message) {
           setMessages(prev => prev.map(msg => 
             msg.id === aiMessageId 
-              ? { ...msg, content: data.message || data.step || "Processing..." }
+              ? { ...msg, content: data.message }
               : msg
           ));
-        });
+        }
+      } catch (e) {
+        console.error('Error parsing message:', e);
+      }
+    };
+    
+    eventSource.addEventListener('connected', (event) => {
+      console.log('🔗 Connected event:', event.data);
+    });
+    
+    eventSource.addEventListener('query_progress', (event) => {
+      console.log('⏳ Query progress event:', event.data);
+      try {
+        const data = JSON.parse(event.data);
         
-        eventSource.addEventListener('sql_generated', (event) => {
-          const data = JSON.parse(event.data);
-          console.log('SQL generated:', data);
-          
-          setMessages(prev => prev.map(msg => 
-            msg.id === aiMessageId 
-              ? { 
-                  ...msg, 
-                  content: "I'll help you with that query. Let me generate the SQL and fetch the results.",
-                  sql: data.sql
-                }
-              : msg
-          ));
-        });
-        
-        eventSource.addEventListener('data_fetched', (event) => {
-          const data = JSON.parse(event.data);
-          console.log('Data fetched:', data);
-          
-          setMessages(prev => prev.map(msg => 
-            msg.id === aiMessageId 
-              ? { 
-                  ...msg,
-                  data: data.query_results?.data || data.data
-                }
-              : msg
-          ));
-        });
-        
-        eventSource.addEventListener('chart_generated', (event) => {
-          const data = JSON.parse(event.data);
-          console.log('Chart generated:', data);
-          
-          setMessages(prev => prev.map(msg => 
-            msg.id === aiMessageId 
-              ? { 
-                  ...msg,
-                  chart: data.chart_data || data.chart
-                }
-              : msg
-          ));
-        });
-        
-        eventSource.addEventListener('query_completed', (event) => {
-          const data = JSON.parse(event.data);
-          console.log('Query completed:', data);
-          
-          setMessages(prev => prev.map(msg => 
-            msg.id === aiMessageId 
-              ? { 
-                  ...msg,
-                  summary: {
-                    title: "Query Results",
-                    insights: [
-                      data.summary || `Query executed on ${selectedConnection.name}`,
-                      `Found ${data.row_count || 0} results`,
-                      `Execution time: ${data.execution_time || 0}ms`
-                    ],
-                    recommendation: "Ask follow-up questions to explore your data further."
-                  }
-                }
-              : msg
-          ));
-          
-          setLoading(false);
-          eventSource.close();
-          
-          // Handle new conversation
-          if (data.is_new_conversation || response.is_new_conversation) {
-            console.log('New conversation created:', data.conversation_id || response.conversation_id);
-            onConversationCreated(data.conversation_id || response.conversation_id);
+        // Check if AI message exists, if not create it
+        setMessages(prev => {
+          const hasAiMessage = prev.some(msg => msg.id === aiMessageId);
+          if (!hasAiMessage) {
+            // Add AI message on first progress event
+            return [...prev, {
+              id: aiMessageId,
+              type: 'assistant',
+              content: data.message || "Processing...",
+              timestamp: new Date()
+            }];
+          } else {
+            // Update existing AI message
+            return prev.map(msg => 
+              msg.id === aiMessageId 
+                ? { ...msg, content: data.message || "Processing..." }
+                : msg
+            );
           }
         });
-        
-        eventSource.addEventListener('query_error', (event) => {
-          const data = JSON.parse(event.data);
-          console.error('Query error:', data);
-          
-          setMessages(prev => prev.map(msg => 
-            msg.id === aiMessageId 
-              ? { 
-                  ...msg,
-                  content: `Error: ${data.error || 'Failed to process query'}`
+      } catch (e) {
+        console.error('Error in query_progress:', e);
+      }
+    });
+    
+    eventSource.addEventListener('sql_generated', (event) => {
+      console.log('📝 SQL generated event:', event.data);
+      try {
+        const data = JSON.parse(event.data);
+        setMessages(prev => prev.map(msg => 
+          msg.id === aiMessageId 
+            ? { 
+                ...msg, 
+                content: "I'll help you with that query. Let me generate the SQL and fetch the results.",
+                sql: data.sql
+              }
+            : msg
+        ));
+      } catch (e) {
+        console.error('Error in sql_generated:', e);
+      }
+    });
+    
+    eventSource.addEventListener('data_fetched', (event) => {
+      console.log('📊 Data fetched event:', event.data);
+      try {
+        const data = JSON.parse(event.data);
+        setMessages(prev => prev.map(msg => 
+          msg.id === aiMessageId 
+            ? { 
+                ...msg,
+                data: data.query_results?.data || data.data
+              }
+            : msg
+        ));
+      } catch (e) {
+        console.error('Error in data_fetched:', e);
+      }
+    });
+    
+    eventSource.addEventListener('chart_generated', (event) => {
+      console.log('📈 Chart generated event:', event.data);
+      try {
+        const data = JSON.parse(event.data);
+        setMessages(prev => prev.map(msg => 
+          msg.id === aiMessageId 
+            ? { 
+                ...msg,
+                chart: data.chart_data || data.chart
+              }
+            : msg
+        ));
+      } catch (e) {
+        console.error('Error in chart_generated:', e);
+      }
+    });
+    
+    eventSource.addEventListener('query_completed', (event) => {
+      console.log('✅ Query completed event:', event.data);
+      try {
+        const data = JSON.parse(event.data);
+        setMessages(prev => prev.map(msg => 
+          msg.id === aiMessageId 
+            ? { 
+                ...msg,
+                summary: {
+                  title: "Query Results",
+                  insights: [
+                    data.summary || `Query executed on ${selectedConnection.name}`,
+                    `Found ${data.row_count || 0} results`,
+                    `Execution time: ${data.execution_time || 0}ms`
+                  ],
+                  recommendation: "Ask follow-up questions to explore your data further."
                 }
-              : msg
-          ));
-          
-          setLoading(false);
-          eventSource.close();
-        });
+              }
+            : msg
+        ));
         
-        eventSource.onerror = (error) => {
-          console.error('SSE error:', error);
-          setLoading(false);
-          eventSource.close();
-          
-          // Add error message
-          const errorMessage = {
-            id: Date.now() + 2,
-            type: 'assistant',
-            content: "Connection lost. Please try again.",
-            timestamp: new Date()
-          };
-          setMessages(prev => [...prev, errorMessage]);
-        };
+        setLoading(false);
         
-        // Cleanup function
-        const cleanup = () => {
-          eventSource.close();
-          setLoading(false);
-        };
-        
-        // Auto-cleanup after 30 seconds
-        setTimeout(cleanup, 30000);
-        
-      } else {
+        if (data.is_new_conversation || response.is_new_conversation) {
+          const newConvId = data.conversation_id || response.conversation_id;
+          console.log('🆕 New conversation created:', newConvId);
+          setJustCreatedConversation(newConvId);
+          onConversationCreated(newConvId);
+        }
+        eventSource.close();
+      } catch (e) {
+        console.error('Error in query_completed:', e);
+      }
+    });
+    
+    eventSource.onerror = (error) => {
+      console.error('❌ EventSource error:', error);
+      console.error('EventSource readyState:', eventSource.readyState);
+      
+      if (!connected) {
+        setLoading(false);
+        setMessages(prev => prev.map(msg => 
+          msg.id === aiMessageId 
+            ? { ...msg, content: "Connection failed. Please try again." }
+            : msg
+        ));
+      }
+      eventSource.close();
+    };
+    
+    // Timeout after 30 seconds
+    setTimeout(() => {
+      if (eventSource.readyState !== EventSource.CLOSED) {
+        console.log('⏰ EventSource timeout');
+        eventSource.close();
+        setLoading(false);
+      }
+    }, 30000);
+    
+  } catch (error) {
+    console.error('❌ EventSource setup error:', error);
+    setLoading(false);
+    setMessages(prev => prev.map(msg => 
+      msg.id === aiMessageId 
+        ? { ...msg, content: "Failed to set up connection. Please try again." }
+        : msg
+    ));
+  }
+}else {
         // Fallback for immediate response (if no SSE)
         setMessages(prev => prev.map(msg => 
           msg.id === aiMessageId 

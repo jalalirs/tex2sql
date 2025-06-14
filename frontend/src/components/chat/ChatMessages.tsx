@@ -25,7 +25,7 @@ export const ChatMessages: React.FC<ChatMessagesProps> = ({
   }, [messages]);
 
   // Empty state when no conversation selected or no messages
-  if (!activeConversation || (messages.length === 0 && !loading)) {
+  if (messages.length === 0 && !loading) {
     return (
       <div className="flex-1 flex items-center justify-center p-8">
         <div className="text-center max-w-md">
