@@ -9,12 +9,10 @@ const middlewares = jsonServer.defaults();
 server.use(middlewares);
 server.use(jsonServer.bodyParser);
 
-// Add these new endpoints to your mock-server/server.js
-
-// Mock storage for schemas (in production this would be files)
+// Mock storage for schemas, column descriptions, and training data
 const mockSchemas = new Map();
 const mockColumnDescriptions = new Map();
-
+const mockTrainingData = new Map();
 
 // Helper function to test MSSQL connection
 function testSQLConnection(connectionData) {
@@ -30,8 +28,8 @@ function testSQLConnection(connectionData) {
       authentication: {
         type: 'default',
         options: {
-          userName: connectionData.username,
-          password: connectionData.password
+          userName: connectionData.username || 'sa',
+          password: connectionData.password || 'l.messi10'
         }
       }
     };
@@ -241,36 +239,20 @@ server.get('/connections/:id', (req, res) => {
     return res.status(404).json({ detail: 'Connection not found' });
   }
   
-  // Return the connection data in the format expected by frontend
-  res.json({
-    id: connection.id,
-    name: connection.name,
-    server: connection.server,
-    database_name: connection.database_name,
-    table_name: connection.table_name,
-    driver: connection.driver,
-    status: connection.status,
-    test_successful: connection.test_successful,
-    column_descriptions_uploaded: connection.column_descriptions_uploaded,
-    generated_examples_count: connection.generated_examples_count,
-    total_queries: connection.total_queries,
-    last_queried_at: connection.last_queried_at,
-    created_at: connection.created_at,
-    trained_at: connection.trained_at
-  });
+  res.json(connection);
 });
+
+// Replace the connection creation endpoint in mock-server/server.js
 
 server.post('/connections', async (req, res) => {
   const { name, server: serverHost, database_name, username, password, table_name, driver } = req.body;
   
-  // Validate required fields
   if (!name || !serverHost || !database_name || !username || !password || !table_name) {
     return res.status(400).json({ 
       detail: 'Missing required fields: name, server, database_name, username, password, table_name' 
     });
   }
 
-  // Check if connection name already exists for this user
   const existingConnection = router.db.get('connections').find({ 
     name: name,
     user_id: 'user-123'
@@ -282,7 +264,6 @@ server.post('/connections', async (req, res) => {
     });
   }
 
-  // Test the connection before creating
   console.log('Testing connection before creation...');
   try {
     const testResult = await testSQLConnection({
@@ -299,57 +280,471 @@ server.post('/connections', async (req, res) => {
       });
     }
 
-    console.log('Connection test successful, creating connection...');
+    console.log('Connection test successful, creating connection with schema...');
+    
+    // Create the connection
+    const newConnection = {
+      id: `conn-${Date.now()}`,
+      name: name,
+      server: serverHost,
+      database_name: database_name,
+      table_name: table_name,
+      driver: driver || 'ODBC Driver 18 for SQL Server',
+      status: 'test_success',
+      test_successful: true,
+      column_descriptions_uploaded: false,
+      generated_examples_count: 0,
+      total_queries: 0,
+      last_queried_at: null,
+      created_at: new Date().toISOString(),
+      trained_at: null,
+      user_id: 'user-123'
+    };
+
+    // Add to database first
+    router.db.get('connections').push(newConnection).write();
+    
+    // AUTOMATICALLY GENERATE SCHEMA upon creation
+    const schemaData = {
+      connection_id: newConnection.id,
+      last_refreshed: new Date().toISOString(),
+      table_info: {
+        total_columns: Object.keys(testResult.columnInfo).length,
+        sample_rows: testResult.sampleData.length
+      },
+      columns: testResult.columnInfo,
+      sample_data: testResult.sampleData.slice(0, 5)
+    };
+    
+    // Store schema data immediately
+    mockSchemas.set(newConnection.id, schemaData);
+    
+    console.log(`Connection created successfully with auto-generated schema: ${newConnection.id}`);
+
+    res.status(201).json(newConnection);
+    
   } catch (error) {
     return res.status(400).json({
       detail: `Connection test failed: ${error.message}`
     });
   }
+});
 
-  // Create new connection
-  const newConnection = {
-    id: `conn-${Date.now()}`,
-    name: name,
-    server: serverHost,
-    database_name: database_name,
-    table_name: table_name,
-    driver: driver || 'ODBC Driver 18 for SQL Server',
-    status: 'test_success',
-    test_successful: true,
-    column_descriptions_uploaded: false,
-    generated_examples_count: 0,
-    total_queries: 0,
-    last_queried_at: null,
-    created_at: new Date().toISOString(),
-    trained_at: null,
-    user_id: 'user-123'
-  };
+// Schema refresh endpoint
+server.post('/connections/:id/refresh-schema', async (req, res) => {
+  const connectionId = req.params.id;
+  const connection = router.db.get('connections').find({ id: connectionId }).value();
+  
+  if (!connection) {
+    return res.status(404).json({ detail: 'Connection not found or access denied' });
+  }
 
-  // Add to database
-  router.db.get('connections').push(newConnection).write();
+  console.log('Refreshing schema for connection:', connectionId);
 
-  console.log('Connection created successfully:', newConnection.id);
+  try {
+    const testResult = await testSQLConnection({
+      server: connection.server,
+      database_name: connection.database_name,
+      username: 'sa',
+      password: 'l.messi10',
+      table_name: connection.table_name
+    });
 
-  // Return the created connection
-  res.status(201).json({
-    id: newConnection.id,
-    name: newConnection.name,
-    server: newConnection.server,
-    database_name: newConnection.database_name,
-    table_name: newConnection.table_name,
-    driver: newConnection.driver,
-    status: newConnection.status,
-    test_successful: newConnection.test_successful,
-    column_descriptions_uploaded: newConnection.column_descriptions_uploaded,
-    generated_examples_count: newConnection.generated_examples_count,
-    total_queries: newConnection.total_queries,
-    last_queried_at: newConnection.last_queried_at,
-    created_at: newConnection.created_at,
-    trained_at: newConnection.trained_at
+    if (testResult.success) {
+      const schemaData = {
+        connection_id: connectionId,
+        last_refreshed: new Date().toISOString(),
+        table_info: {
+          total_columns: Object.keys(testResult.columnInfo).length,
+          sample_rows: testResult.sampleData.length
+        },
+        columns: testResult.columnInfo,
+        sample_data: testResult.sampleData.slice(0, 5)
+      };
+      
+      mockSchemas.set(connectionId, schemaData);
+      
+      const taskId = `schema-refresh-${Date.now()}`;
+      
+      res.json({
+        task_id: taskId,
+        connection_id: connectionId,
+        task_type: 'refresh_schema',
+        status: 'completed',
+        progress: 100,
+        stream_url: `/events/stream/${taskId}`,
+        created_at: new Date().toISOString()
+      });
+    } else {
+      res.status(400).json({
+        detail: `Schema refresh failed: ${testResult.error}`
+      });
+    }
+  } catch (error) {
+    console.error('Schema refresh error:', error);
+    res.status(500).json({
+      detail: `Schema refresh failed: ${error.message}`
+    });
+  }
+});
+
+// Get schema endpoint
+server.get('/connections/:id/schema', (req, res) => {
+  const connectionId = req.params.id;
+  const connection = router.db.get('connections').find({ id: connectionId }).value();
+  
+  if (!connection) {
+    return res.status(404).json({ detail: 'Connection not found or access denied' });
+  }
+
+  const schemaData = mockSchemas.get(connectionId);
+  
+  if (!schemaData) {
+    return res.status(404).json({ 
+      detail: 'Schema not found. Try refreshing the schema first.' 
+    });
+  }
+
+  res.json({
+    connection_id: connectionId,
+    connection_name: connection.name,
+    schema: schemaData,
+    last_refreshed: schemaData.last_refreshed,
+    total_columns: Object.keys(schemaData.columns).length
   });
 });
 
-// Rest of the endpoints remain the same...
+// Get column descriptions endpoint
+server.get('/connections/:id/column-descriptions', (req, res) => {
+  const connectionId = req.params.id;
+  const connection = router.db.get('connections').find({ id: connectionId }).value();
+  
+  if (!connection) {
+    return res.status(404).json({ detail: 'Connection not found or access denied' });
+  }
+
+  const schemaData = mockSchemas.get(connectionId);
+  const columnDescriptions = mockColumnDescriptions.get(connectionId) || {};
+  
+  if (!schemaData) {
+    return res.json({
+      connection_id: connectionId,
+      connection_name: connection.name,
+      column_descriptions: [],
+      total_columns: 0,
+      has_descriptions: false
+    });
+  }
+
+  const columnData = Object.keys(schemaData.columns).map(colName => {
+    const colInfo = schemaData.columns[colName];
+    return {
+      column_name: colName,
+      data_type: colInfo.data_type,
+      variable_range: colInfo.variable_range || `Type: ${colInfo.data_type}`,
+      description: columnDescriptions[colName] || '',
+      has_description: !!columnDescriptions[colName],
+      categories: colInfo.categories,
+      range: colInfo.range,
+      date_range: colInfo.date_range
+    };
+  });
+
+  res.json({
+    connection_id: connectionId,
+    connection_name: connection.name,
+    column_descriptions: columnData,
+    total_columns: columnData.length,
+    has_descriptions: Object.keys(columnDescriptions).length > 0
+  });
+});
+
+// Update column descriptions endpoint
+server.put('/connections/:id/column-descriptions', (req, res) => {
+  const connectionId = req.params.id;
+  const connection = router.db.get('connections').find({ id: connectionId }).value();
+  
+  if (!connection) {
+    return res.status(404).json({ detail: 'Connection not found or access denied' });
+  }
+
+  const { columns } = req.body;
+  
+  if (!columns || !Array.isArray(columns)) {
+    return res.status(400).json({
+      detail: 'Invalid CSV format. Expected columns array.'
+    });
+  }
+
+  const descriptions = {};
+  columns.forEach(col => {
+    if (col.column && col.description) {
+      descriptions[col.column] = col.description;
+    }
+  });
+
+  mockColumnDescriptions.set(connectionId, descriptions);
+
+  const connections = router.db.get('connections');
+  connections.find({ id: connectionId }).assign({ 
+    column_descriptions_uploaded: Object.keys(descriptions).length > 0 
+  }).write();
+
+  res.json({
+    success: true,
+    message: `Updated descriptions for ${Object.keys(descriptions).length} columns`,
+    connection_id: connectionId,
+    total_columns: Object.keys(descriptions).length
+  });
+});
+
+// CSV validation endpoint
+server.post('/connections/:id/validate-csv', (req, res) => {
+  const connectionId = req.params.id;
+  const connection = router.db.get('connections').find({ id: connectionId }).value();
+  
+  if (!connection) {
+    return res.status(404).json({ detail: 'Connection not found or access denied' });
+  }
+
+  const mockColumns = [
+    { column_name: 'EmployeeID', description: 'Unique identifier for employee' },
+    { column_name: 'EmployeeName', description: 'Full name of the employee' },
+    { column_name: 'Department', description: 'Department where employee works' },
+    { column_name: 'Salary', description: 'Annual salary in USD' }
+  ];
+
+  res.json({
+    valid: true,
+    column_count: mockColumns.length,
+    columns: mockColumns,
+    total_columns: mockColumns.length
+  });
+});
+
+
+// Generate training data endpoint
+server.post('/connections/:id/generate-training-data', (req, res) => {
+  const connectionId = req.params.id;
+  const connection = router.db.get('connections').find({ id: connectionId }).value();
+  
+  if (!connection) {
+    return res.status(404).json({ detail: 'Connection not found or access denied' });
+  }
+
+  const { num_examples = 20 } = req.body;
+  const taskId = `generate-data-${Date.now()}`;
+
+  console.log(`Starting data generation for connection ${connectionId}, ${num_examples} examples`);
+
+  // FIXED: Reduce timeout to 500ms so frontend polling catches it
+  setTimeout(() => {
+    const mockExamples = [
+      {
+        question: "Show me all employees in the Engineering department",
+        sql: "SELECT * FROM Employees WHERE Department = 'Engineering'"
+      },
+      {
+        question: "What is the average salary by department?",
+        sql: "SELECT Department, AVG(Salary) as AvgSalary FROM Employees GROUP BY Department"
+      },
+      {
+        question: "Find the top 5 highest paid employees",
+        sql: "SELECT TOP 5 EmployeeName, Salary FROM Employees ORDER BY Salary DESC"
+      },
+      {
+        question: "How many employees were hired in 2023?",
+        sql: "SELECT COUNT(*) as HiredIn2023 FROM Employees WHERE YEAR(HireDate) = 2023"
+      },
+      {
+        question: "List employees with salary greater than 80000",
+        sql: "SELECT EmployeeName, Department, Salary FROM Employees WHERE Salary > 80000"
+      },
+      {
+        question: "What is the minimum and maximum salary in each department?",
+        sql: "SELECT Department, MIN(Salary) as MinSalary, MAX(Salary) as MaxSalary FROM Employees GROUP BY Department"
+      },
+      {
+        question: "Show me employees hired in the last 6 months",
+        sql: "SELECT * FROM Employees WHERE HireDate >= DATEADD(month, -6, GETDATE())"
+      },
+      {
+        question: "Count employees by department",
+        sql: "SELECT Department, COUNT(*) as EmployeeCount FROM Employees GROUP BY Department"
+      }
+    ];
+
+    const generatedExamples = [];
+    for (let i = 0; i < num_examples; i++) {
+      const example = mockExamples[i % mockExamples.length];
+      generatedExamples.push({
+        ...example,
+        id: `example-${i + 1}`,
+        question: i < mockExamples.length ? example.question : `${example.question} (Variation ${i + 1})`,
+      });
+    }
+
+    mockTrainingData.set(connectionId, {
+      connection_id: connectionId,
+      examples: generatedExamples,
+      generated_at: new Date().toISOString(),
+      total_examples: generatedExamples.length
+    });
+
+    const connections = router.db.get('connections');
+    connections.find({ id: connectionId }).assign({ 
+      status: 'data_generated',
+      generated_examples_count: generatedExamples.length
+    }).write();
+
+    console.log(`Generated ${generatedExamples.length} training examples for connection ${connectionId}`);
+  }, 500); // CHANGED from 2000 to 500ms
+
+  res.json({
+    task_id: taskId,
+    connection_id: connectionId,
+    task_type: 'generate_data',
+    status: 'running',
+    progress: 0,
+    stream_url: `/events/stream/${taskId}`,
+    created_at: new Date().toISOString()
+  });
+});
+
+server.get('/connections/:id/training-data', (req, res) => {
+  const connectionId = req.params.id;
+  const connection = router.db.get('connections').find({ id: connectionId }).value();
+  
+  if (!connection) {
+    return res.status(404).json({ detail: 'Connection not found or access denied' });
+  }
+
+  const trainingData = mockTrainingData.get(connectionId);
+  
+  if (!trainingData) {
+    return res.status(404).json({ detail: 'No training data available' });
+  }
+
+  res.json({
+    connection_id: connectionId,
+    connection_name: connection.name,
+    initial_prompt: `You are a Microsoft SQL Server expert specializing in the ${connection.table_name} table.`,
+    column_descriptions: [],
+    generated_examples: trainingData.examples,
+    total_examples: trainingData.total_examples,
+    generated_at: trainingData.generated_at
+  });
+});
+
+// Train model endpoint - FIXED ROUTE TO MATCH BACKEND
+server.post('/connections/:id/train', (req, res) => {
+  const connectionId = req.params.id;
+  const connection = router.db.get('connections').find({ id: connectionId }).value();
+  
+  if (!connection) {
+    return res.status(404).json({ detail: 'Connection not found or access denied' });
+  }
+
+  // Allow training with test_success status (no data generation required)
+  if (!['test_success', 'data_generated', 'trained'].includes(connection.status)) {
+    return res.status(400).json({ 
+      detail: `Connection must be successfully tested first, currently: ${connection.status}` 
+    });
+  }
+
+  const taskId = `train-model-${Date.now()}`;
+
+  console.log(`Starting model training for connection ${connectionId} (status: ${connection.status})`);
+
+  setTimeout(() => {
+    const connections = router.db.get('connections');
+    connections.find({ id: connectionId }).assign({ 
+      status: 'trained',
+      trained_at: new Date().toISOString()
+    }).write();
+
+    console.log(`Model training completed for connection ${connectionId}`);
+  }, 5000);
+
+  res.json({
+    task_id: taskId,
+    connection_id: connectionId,
+    task_type: 'train_model',
+    status: 'running',
+    progress: 0,
+    stream_url: `/events/stream/${taskId}`,
+    created_at: new Date().toISOString()
+  });
+});
+
+// Train model endpoint - NEW ROUTE
+// Replace the train-model endpoint in your mock server with this fixed version:
+
+// Train model endpoint - FIXED: No data generation requirement
+server.post('/connections/:id/train-model', (req, res) => {
+  const connectionId = req.params.id;
+  const connection = router.db.get('connections').find({ id: connectionId }).value();
+  
+  if (!connection) {
+    return res.status(404).json({ detail: 'Connection not found or access denied' });
+  }
+
+  // FIXED: Allow training with test_success status (no data generation required)
+  if (!['test_success', 'data_generated', 'trained'].includes(connection.status)) {
+    return res.status(400).json({ 
+      detail: `Connection must be successfully tested first, currently: ${connection.status}` 
+    });
+  }
+
+  const taskId = `train-model-${Date.now()}`;
+
+  console.log(`Starting model training for connection ${connectionId} (status: ${connection.status})`);
+
+  setTimeout(() => {
+    const connections = router.db.get('connections');
+    connections.find({ id: connectionId }).assign({ 
+      status: 'trained',
+      trained_at: new Date().toISOString()
+    }).write();
+
+    console.log(`Model training completed for connection ${connectionId}`);
+  }, 5000);
+
+  res.json({
+    task_id: taskId,
+    connection_id: connectionId,
+    task_type: 'train_model',
+    status: 'running',
+    progress: 0,
+    stream_url: `/events/stream/${taskId}`,
+    created_at: new Date().toISOString()
+  });
+});
+
+// Training task management endpoints
+server.get('/training/tasks/:taskId/status', (req, res) => {
+  const taskId = req.params.taskId;
+  const isCompleted = Date.now() - parseInt(taskId.split('-').pop()) > 3000;
+  
+  res.json({
+    task_id: taskId,
+    status: isCompleted ? 'completed' : 'running',
+    progress: isCompleted ? 100 : Math.floor(Math.random() * 80) + 10,
+    error_message: null,
+    created_at: new Date(Date.now() - 5000).toISOString(),
+    completed_at: isCompleted ? new Date().toISOString() : null
+  });
+});
+
+server.get('/training/tasks', (req, res) => {
+  res.json({
+    tasks: [],
+    total: 0,
+    user_id: 'user-123'
+  });
+});
+
+// Conversation endpoints
 server.get('/conversations', (req, res) => {
   const conversations = router.db.get('conversations').value();
   res.json(conversations || []);
@@ -479,207 +874,7 @@ server.post('/conversations/query', (req, res) => {
   });
 });
 
-// Schema refresh endpoint
-server.post('/connections/:id/refresh-schema', async (req, res) => {
-  const connectionId = req.params.id;
-  const connection = router.db.get('connections').find({ id: connectionId }).value();
-  
-  if (!connection) {
-    return res.status(404).json({ detail: 'Connection not found or access denied' });
-  }
-
-  console.log('Refreshing schema for connection:', connectionId);
-
-  try {
-    // Simulate schema refresh by testing the connection
-    const testResult = await testSQLConnection({
-      server: connection.server,
-      database_name: connection.database_name,
-      username: 'sa', // Mock username
-      password: 'l.messi10', // Mock password
-      table_name: connection.table_name
-    });
-
-    if (testResult.success) {
-      // Store schema data
-      const schemaData = {
-        connection_id: connectionId,
-        last_refreshed: new Date().toISOString(),
-        table_info: {
-          total_columns: Object.keys(testResult.columnInfo).length,
-          sample_rows: testResult.sampleData.length
-        },
-        columns: testResult.columnInfo,
-        sample_data: testResult.sampleData.slice(0, 5)
-      };
-      
-      mockSchemas.set(connectionId, schemaData);
-      
-      const taskId = `schema-refresh-${Date.now()}`;
-      
-      res.json({
-        task_id: taskId,
-        connection_id: connectionId,
-        task_type: 'refresh_schema',
-        status: 'completed',
-        progress: 100,
-        stream_url: `/events/stream/${taskId}`,
-        created_at: new Date().toISOString()
-      });
-    } else {
-      res.status(400).json({
-        detail: `Schema refresh failed: ${testResult.error}`
-      });
-    }
-  } catch (error) {
-    console.error('Schema refresh error:', error);
-    res.status(500).json({
-      detail: `Schema refresh failed: ${error.message}`
-    });
-  }
-});
-
-// Get schema endpoint
-server.get('/connections/:id/schema', (req, res) => {
-  const connectionId = req.params.id;
-  const connection = router.db.get('connections').find({ id: connectionId }).value();
-  
-  if (!connection) {
-    return res.status(404).json({ detail: 'Connection not found or access denied' });
-  }
-
-  const schemaData = mockSchemas.get(connectionId);
-  
-  if (!schemaData) {
-    return res.status(404).json({ 
-      detail: 'Schema not found. Try refreshing the schema first.' 
-    });
-  }
-
-  res.json({
-    connection_id: connectionId,
-    connection_name: connection.name,
-    schema: schemaData,
-    last_refreshed: schemaData.last_refreshed,
-    total_columns: Object.keys(schemaData.columns).length
-  });
-});
-
-// Get column descriptions endpoint
-server.get('/connections/:id/column-descriptions', (req, res) => {
-  const connectionId = req.params.id;
-  const connection = router.db.get('connections').find({ id: connectionId }).value();
-  
-  if (!connection) {
-    return res.status(404).json({ detail: 'Connection not found or access denied' });
-  }
-
-  const schemaData = mockSchemas.get(connectionId);
-  const columnDescriptions = mockColumnDescriptions.get(connectionId) || {};
-  
-  if (!schemaData) {
-    return res.json({
-      connection_id: connectionId,
-      connection_name: connection.name,
-      column_descriptions: [],
-      total_columns: 0,
-      has_descriptions: false
-    });
-  }
-
-  // Combine schema info with descriptions
-  const columnData = Object.keys(schemaData.columns).map(colName => {
-    const colInfo = schemaData.columns[colName];
-    return {
-      column_name: colName,
-      data_type: colInfo.data_type,
-      variable_range: colInfo.variable_range || `Type: ${colInfo.data_type}`,
-      description: columnDescriptions[colName] || '',
-      has_description: !!columnDescriptions[colName],
-      categories: colInfo.categories,
-      range: colInfo.range,
-      date_range: colInfo.date_range
-    };
-  });
-
-  res.json({
-    connection_id: connectionId,
-    connection_name: connection.name,
-    column_descriptions: columnData,
-    total_columns: columnData.length,
-    has_descriptions: Object.keys(columnDescriptions).length > 0
-  });
-});
-
-// Update column descriptions endpoint
-server.put('/connections/:id/column-descriptions', (req, res) => {
-  const connectionId = req.params.id;
-  const connection = router.db.get('connections').find({ id: connectionId }).value();
-  
-  if (!connection) {
-    return res.status(404).json({ detail: 'Connection not found or access denied' });
-  }
-
-  // In a real implementation, you'd parse the uploaded CSV file
-  // For mock, we'll simulate processing
-  const { columns } = req.body; // Expecting { columns: [{ column: 'name', description: 'desc' }] }
-  
-  if (!columns || !Array.isArray(columns)) {
-    return res.status(400).json({
-      detail: 'Invalid CSV format. Expected columns array.'
-    });
-  }
-
-  // Store column descriptions
-  const descriptions = {};
-  columns.forEach(col => {
-    if (col.column && col.description) {
-      descriptions[col.column] = col.description;
-    }
-  });
-
-  mockColumnDescriptions.set(connectionId, descriptions);
-
-  // Update connection flag
-  const connections = router.db.get('connections');
-  connections.find({ id: connectionId }).assign({ 
-    column_descriptions_uploaded: Object.keys(descriptions).length > 0 
-  }).write();
-
-  res.json({
-    success: true,
-    message: `Updated descriptions for ${Object.keys(descriptions).length} columns`,
-    connection_id: connectionId,
-    total_columns: Object.keys(descriptions).length
-  });
-});
-
-// CSV validation endpoint (existing one - just ensure it's there)
-server.post('/connections/:id/validate-csv', (req, res) => {
-  const connectionId = req.params.id;
-  const connection = router.db.get('connections').find({ id: connectionId }).value();
-  
-  if (!connection) {
-    return res.status(404).json({ detail: 'Connection not found or access denied' });
-  }
-
-  // Mock CSV validation - in real implementation you'd parse the file
-  const mockColumns = [
-    { column_name: 'EmployeeID', description: 'Unique identifier for employee' },
-    { column_name: 'EmployeeName', description: 'Full name of the employee' },
-    { column_name: 'Department', description: 'Department where employee works' },
-    { column_name: 'Salary', description: 'Annual salary in USD' }
-  ];
-
-  res.json({
-    valid: true,
-    column_count: mockColumns.length,
-    columns: mockColumns,
-    total_columns: mockColumns.length
-  });
-});
-
-// Initialize some mock schema data for existing connections
+// Initialize mock data
 function initializeMockData() {
   const connections = router.db.get('connections').value();
   
@@ -694,61 +889,88 @@ function initializeMockData() {
           sample_rows: 5
         },
         columns: {
-          'OrderID': {
+          'EmployeeID': {
             data_type: 'int',
             variable_range: 'Range: 1 - 50000 (Avg: 25000)'
           },
-          'CustomerID': {
-            data_type: 'varchar(10)',
-            variable_range: 'Type: varchar(10)',
-            categories: ['CUST001', 'CUST002', 'CUST003', 'CUST004', 'CUST005']
-          },
-          'OrderDate': {
-            data_type: 'datetime',
-            variable_range: 'Date range: 2023-01-01 to 2024-12-01',
-            date_range: { min: '2023-01-01', max: '2024-12-01' }
-          },
-          'ProductName': {
+          'EmployeeName': {
             data_type: 'varchar(100)',
             variable_range: 'Type: varchar(100)',
-            categories: ['Chai', 'Chang', 'Aniseed Syrup', 'Chef Anton\'s Cajun Seasoning']
+            categories: ['John Smith', 'Jane Doe', 'Bob Johnson', 'Alice Wilson', 'Charlie Brown']
           },
-          'Quantity': {
-            data_type: 'int',
-            variable_range: 'Range: 1 - 100 (Avg: 15)',
-            range: { min: 1, max: 100, avg: 15 }
+          'Department': {
+            data_type: 'varchar(50)',
+            variable_range: 'Type: varchar(50)',
+            categories: ['Engineering', 'Marketing', 'Sales', 'HR', 'Finance']
           },
-          'UnitPrice': {
+          'Salary': {
             data_type: 'decimal(10,2)',
-            variable_range: 'Range: 5.00 - 999.99 (Avg: 125.50)',
-            range: { min: 5.00, max: 999.99, avg: 125.50 }
+            variable_range: 'Range: 35000.00 - 150000.00 (Avg: 75000.00)',
+            range: { min: 35000, max: 150000, avg: 75000 }
+          },
+          'HireDate': {
+            data_type: 'datetime',
+            variable_range: 'Date range: 2020-01-01 to 2024-12-01',
+            date_range: { min: '2020-01-01', max: '2024-12-01' }
+          },
+          'IsActive': {
+            data_type: 'bit',
+            variable_range: 'Type: bit',
+            categories: ['0', '1']
           }
         },
         sample_data: [
-          { OrderID: 1001, CustomerID: 'CUST001', OrderDate: '2024-11-15', ProductName: 'Chai', Quantity: 10, UnitPrice: 18.00 },
-          { OrderID: 1002, CustomerID: 'CUST002', OrderDate: '2024-11-14', ProductName: 'Chang', Quantity: 5, UnitPrice: 19.00 },
-          { OrderID: 1003, CustomerID: 'CUST003', OrderDate: '2024-11-13', ProductName: 'Aniseed Syrup', Quantity: 8, UnitPrice: 10.00 },
-          { OrderID: 1004, CustomerID: 'CUST001', OrderDate: '2024-11-12', ProductName: 'Chai', Quantity: 12, UnitPrice: 18.00 },
-          { OrderID: 1005, CustomerID: 'CUST004', OrderDate: '2024-11-11', ProductName: 'Chang', Quantity: 3, UnitPrice: 19.00 }
+          { EmployeeID: 1001, EmployeeName: 'John Smith', Department: 'Engineering', Salary: 95000, HireDate: '2022-03-15', IsActive: 1 },
+          { EmployeeID: 1002, EmployeeName: 'Jane Doe', Department: 'Marketing', Salary: 85000, HireDate: '2021-07-20', IsActive: 1 },
+          { EmployeeID: 1003, EmployeeName: 'Bob Johnson', Department: 'Sales', Salary: 75000, HireDate: '2020-11-10', IsActive: 1 },
+          { EmployeeID: 1004, EmployeeName: 'Alice Wilson', Department: 'HR', Salary: 65000, HireDate: '2023-01-05', IsActive: 1 },
+          { EmployeeID: 1005, EmployeeName: 'Charlie Brown', Department: 'Finance', Salary: 80000, HireDate: '2022-09-12', IsActive: 0 }
         ]
       });
 
       // Mock column descriptions for Production DB
       mockColumnDescriptions.set(conn.id, {
-        'OrderID': 'Unique identifier for each order',
-        'CustomerID': 'Customer identification code',
-        'OrderDate': 'Date when the order was placed',
-        'ProductName': 'Name of the ordered product',
-        'Quantity': 'Number of items ordered',
-        'UnitPrice': 'Price per unit in USD'
+        'EmployeeID': 'Unique identifier for each employee',
+        'EmployeeName': 'Full name of the employee',
+        'Department': 'Department where employee works',
+        'Salary': 'Annual salary in USD',
+        'HireDate': 'Date when employee was hired',
+        'IsActive': 'Whether employee is currently active (1) or inactive (0)'
       });
+
+      // Mock training data for trained connection
+      if (conn.status === 'trained') {
+        const mockExamples = [
+          {
+            id: 'example-1',
+            question: "Show me all employees in the Engineering department",
+            sql: "SELECT * FROM Employees WHERE Department = 'Engineering'"
+          },
+          {
+            id: 'example-2', 
+            question: "What is the average salary by department?",
+            sql: "SELECT Department, AVG(Salary) as AvgSalary FROM Employees GROUP BY Department"
+          },
+          {
+            id: 'example-3',
+            question: "Find the top 5 highest paid employees", 
+            sql: "SELECT TOP 5 EmployeeName, Salary FROM Employees ORDER BY Salary DESC"
+          }
+        ];
+
+        mockTrainingData.set(conn.id, {
+          connection_id: conn.id,
+          examples: mockExamples,
+          generated_at: '2024-11-01T02:00:00Z',
+          total_examples: mockExamples.length
+        });
+      }
     }
   });
 }
 
 // Call initialization after server setup
 setTimeout(initializeMockData, 1000);
-
 
 server.listen(6020, () => {
   console.log('Mock server running on http://localhost:6020');

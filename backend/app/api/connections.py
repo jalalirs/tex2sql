@@ -12,11 +12,21 @@ from app.models.schemas import (
     ConnectionListResponse, TrainingDataView, ColumnDescriptionItem, TaskResponse,
     ConnectionDeleteResponse
 )
+from app.models.database import TrainingTask, ConnectionStatus, User
+from app.models.schemas import GenerateExamplesRequest, TaskResponse
+from app.models.vanna_models import VannaConfig, DatabaseConfig
 from app.models.database import TrainingTask, User
 from app.core.sse_manager import sse_manager
 from app.utils.file_handler import file_handler
 from app.utils.validators import validate_connection_data
 from app.config import settings
+from app.utils.sse_utils import SSELogger
+from app.services.training_service import training_service
+from app.services.vanna_service import vanna_service
+from app.api.training import _update_task_progress
+
+
+
 
 router = APIRouter(prefix="/connections", tags=["Connections"])
 logger = logging.getLogger(__name__)
@@ -563,6 +573,142 @@ async def _run_schema_refresh(
         })
 
 
+@router.post("/{connection_id}/generate-data", response_model=TaskResponse)
+async def generate_training_data(
+    connection_id: str,
+    request: GenerateExamplesRequest,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(validate_api_key)
+):
+    """Generate training data for a user's connection"""
+    try:
+        # Validate connection exists and belongs to user
+        connection = await connection_service.get_user_connection(db, str(current_user.id), connection_id)
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Connection not found or access denied"
+            )
+        
+        # Check connection status
+        if connection.status not in [ConnectionStatus.TEST_SUCCESS, ConnectionStatus.DATA_GENERATED]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Connection must be in TEST_SUCCESS status, currently: {connection.status}"
+            )
+        
+        # Create task for tracking
+        task_id = str(uuid.uuid4())
+        task = TrainingTask(
+            id=task_id,
+            connection_id=connection_id,
+            user_id=current_user.id,  # Track user
+            task_type="generate_data",
+            status="running"
+        )
+        
+        db.add(task)
+        await db.commit()
+        
+        # Start data generation in background
+        background_tasks.add_task(
+            _run_data_generation,
+            connection_id,
+            request.num_examples,
+            task_id,
+            current_user,
+            db
+        )
+        
+        return TaskResponse(
+            task_id=task_id,
+            connection_id=connection_id,
+            task_type="generate_data",
+            status="running",
+            progress=0,
+            stream_url=f"/events/stream/{task_id}",
+            created_at=task.created_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start data generation: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start data generation: {str(e)}"
+        )
+
+# In app/api/training.py, replace the train_model function with this fixed version:
+
+@router.post("{connection_id}/train", response_model=TaskResponse)
+async def train_model(
+    connection_id: str,
+    background_tasks: BackgroundTasks,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+    _: bool = Depends(validate_api_key)
+):
+    """Train Vanna model for a user's connection"""
+    try:
+        # Validate connection exists and belongs to user
+        connection = await connection_service.get_user_connection(db, str(current_user.id), connection_id)
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Connection not found or access denied"
+            )
+        
+        # FIXED: Allow training with test_success status (no data generation required)
+        if connection.status not in [ConnectionStatus.TEST_SUCCESS, ConnectionStatus.DATA_GENERATED, ConnectionStatus.TRAINED]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Connection must be successfully tested first, currently: {connection.status}"
+            )
+        
+        # Create task for tracking
+        task_id = str(uuid.uuid4())
+        task = TrainingTask(
+            id=task_id,
+            connection_id=connection_id,
+            user_id=current_user.id,
+            task_type="train_model",
+            status="running"
+        )
+        
+        db.add(task)
+        await db.commit()
+        
+        # Start training in background
+        background_tasks.add_task(
+            _run_model_training,
+            connection_id,
+            task_id,
+            current_user,
+            db
+        )
+        
+        return TaskResponse(
+            task_id=task_id,
+            connection_id=connection_id,
+            task_type="train_model",
+            status="running",
+            progress=0,
+            stream_url=f"/events/stream/{task_id}",
+            created_at=task.created_at
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to start model training: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to start model training: {str(e)}"
+        )
+
 @router.post("/{connection_id}/validate-csv")
 async def validate_column_descriptions_csv(
     connection_id: str,
@@ -604,6 +750,149 @@ async def validate_column_descriptions_csv(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"CSV validation failed: {str(e)}"
         )
+
+
+async def _run_data_generation(
+    connection_id: str, 
+    num_examples: int, 
+    task_id: str,
+    user: User,
+    db: AsyncSession
+):
+    """Background task for data generation"""
+    sse_logger = SSELogger(sse_manager, task_id, "data_generation")
+    
+    try:
+        await _update_task_status(db, task_id, "running", 0)
+        await sse_logger.info(f"Starting data generation for {num_examples} examples")
+        await sse_manager.send_to_task(task_id, "data_generation_started", {
+            "user_id": str(user.id),
+            "connection_id": connection_id,
+            "num_examples": num_examples,
+            "task_id": task_id
+        })
+        
+        # Run data generation
+        result = await training_service.generate_training_data(
+            db, user, connection_id, num_examples, task_id
+        )
+                
+        if result.success:
+            await _update_task_status(db, task_id, "completed", 100)
+            await sse_manager.send_to_task(task_id, "data_generation_completed", {
+                "success": True,
+                "total_generated": result.total_generated,
+                "failed_count": result.failed_count,
+                "connection_id": connection_id,
+                "user_id": str(user.id),
+                "task_id": task_id
+            })
+            await sse_logger.info("Data generation completed successfully")
+        else:
+            await _update_task_status(db, task_id, "failed", 0, result.error_message)
+            await sse_manager.send_to_task(task_id, "data_generation_error", {
+                "success": False,
+                "error": result.error_message,
+                "connection_id": connection_id,
+                "user_id": str(user.id),
+                "task_id": task_id
+            })
+            await sse_logger.error(f"Data generation failed: {result.error_message}")
+            
+    except Exception as e:
+        error_msg = f"Data generation task failed: {str(e)}"
+        logger.error(error_msg)
+        await _update_task_status(db, task_id, "failed", 0, error_msg)
+        await sse_manager.send_to_task(task_id, "data_generation_error", {
+            "success": False,
+            "error": error_msg,
+            "connection_id": connection_id,
+            "user_id": str(user.id),
+            "task_id": task_id
+        })
+        await sse_logger.error(error_msg)
+
+async def _run_model_training(
+    connection_id: str, 
+    task_id: str, 
+    user: User,
+    db: AsyncSession
+):
+    """Background task for model training"""
+    sse_logger = SSELogger(sse_manager, task_id, "training")
+    
+    try:
+        await _update_task_status(db, task_id, "running", 0)
+        await sse_logger.info("Starting model training")
+        await sse_manager.send_to_task(task_id, "training_started", {
+            "user_id": str(user.id),
+            "connection_id": connection_id,
+            "task_id": task_id
+        })
+        
+        # Get raw connection details with all fields
+        connection = await connection_service.get_connection_by_id(db, connection_id)
+        if not connection:
+            raise ValueError("Connection not found")
+        
+        # Verify user ownership
+        if str(connection.user_id) != str(user.id):
+            raise ValueError("Access denied: Connection does not belong to user")
+        
+        # Create configurations
+        vanna_config = VannaConfig(
+            api_key=settings.OPENAI_API_KEY,
+            base_url=settings.OPENAI_BASE_URL,
+            model=settings.OPENAI_MODEL
+        )
+        
+        db_config = DatabaseConfig(
+            server=connection.server,
+            database_name=connection.database_name,
+            username=connection.username,
+            password=connection.password,
+            table_name=connection.table_name,
+            driver=connection.driver or "ODBC Driver 17 for SQL Server"
+        )
+        
+        # Progress callback for SSE updates
+        async def progress_callback(progress: int, message: str):
+            await sse_logger.progress(progress, message)
+            await _update_task_progress(db, task_id, progress)
+        
+        # Train model
+        vanna_instance = await vanna_service.setup_and_train_vanna(
+            connection_id, db_config, vanna_config, retrain=True, progress_callback=progress_callback
+        )
+        
+        if vanna_instance:
+            # Update connection status to trained
+            await connection_service.update_connection_status(db, connection_id, ConnectionStatus.TRAINED)
+            
+            await _update_task_status(db, task_id, "completed", 100)
+            await sse_manager.send_to_task(task_id, "training_completed", {
+                "success": True,
+                "connection_id": connection_id,
+                "connection_name": connection.name,
+                "user_id": str(user.id),
+                "task_id": task_id
+            })
+            await sse_logger.info("Model training completed successfully")
+        else:
+            raise ValueError("Failed to train Vanna model")
+            
+    except Exception as e:
+        error_msg = f"Model training failed: {str(e)}"
+        logger.error(error_msg)
+        await _update_task_status(db, task_id, "failed", 0, error_msg)
+        await sse_manager.send_to_task(task_id, "training_error", {
+            "success": False,
+            "error": error_msg,
+            "connection_id": connection_id,
+            "user_id": str(user.id),
+            "task_id": task_id
+        })
+        await sse_logger.error(error_msg)
 
 
 async def _update_task_status(db: AsyncSession, task_id: str, status: str, progress: int, error_message: str = None):

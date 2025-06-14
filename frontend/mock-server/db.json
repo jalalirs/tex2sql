@@ -36,7 +36,7 @@
       "id": "conn-456",
       "name": "Analytics DB",
       "server": "localhost,1433",
-      "database_name": "TestCompanyDB", 
+      "database_name": "TestCompanyDB",
       "table_name": "Orders",
       "driver": "ODBC Driver 18 for SQL Server",
       "status": "test_success",
@@ -45,6 +45,74 @@
       "generated_examples_count": 0,
       "total_queries": 0,
       "created_at": "2024-12-01T00:00:00Z",
+      "user_id": "user-123"
+    },
+    {
+      "id": "conn-1749909117491",
+      "name": "employees",
+      "server": "localhost,1433",
+      "database_name": "TestCompanyDB",
+      "table_name": "Employees",
+      "driver": "ODBC Driver 18 for SQL Server",
+      "status": "data_generated",
+      "test_successful": true,
+      "column_descriptions_uploaded": false,
+      "generated_examples_count": 20,
+      "total_queries": 0,
+      "last_queried_at": null,
+      "created_at": "2025-06-14T13:51:57.491Z",
+      "trained_at": null,
+      "user_id": "user-123"
+    },
+    {
+      "id": "conn-1749912351839",
+      "name": "employees2",
+      "server": "localhost,1433",
+      "database_name": "TestCompanyDB",
+      "table_name": "Employees",
+      "driver": "ODBC Driver 18 for SQL Server",
+      "status": "test_success",
+      "test_successful": true,
+      "column_descriptions_uploaded": false,
+      "generated_examples_count": 0,
+      "total_queries": 0,
+      "last_queried_at": null,
+      "created_at": "2025-06-14T14:45:51.839Z",
+      "trained_at": null,
+      "user_id": "user-123"
+    },
+    {
+      "id": "conn-1749912901546",
+      "name": "employees3",
+      "server": "localhost,1433",
+      "database_name": "TestCompanyDB",
+      "table_name": "Employees",
+      "driver": "ODBC Driver 18 for SQL Server",
+      "status": "data_generated",
+      "test_successful": true,
+      "column_descriptions_uploaded": false,
+      "generated_examples_count": 20,
+      "total_queries": 0,
+      "last_queried_at": null,
+      "created_at": "2025-06-14T14:55:01.546Z",
+      "trained_at": null,
+      "user_id": "user-123"
+    },
+    {
+      "id": "conn-1749916171447",
+      "name": "employees5",
+      "server": "localhost,1433",
+      "database_name": "TestCompanyDB",
+      "table_name": "Employees",
+      "driver": "ODBC Driver 18 for SQL Server",
+      "status": "trained",
+      "test_successful": true,
+      "column_descriptions_uploaded": false,
+      "generated_examples_count": 20,
+      "total_queries": 0,
+      "last_queried_at": null,
+      "created_at": "2025-06-14T15:49:31.447Z",
+      "trained_at": "2025-06-14T15:53:45.409Z",
       "user_id": "user-123"
     }
   ],
@@ -69,7 +137,7 @@
     {
       "id": "conv-456",
       "connection_id": "conn-123",
-      "connection_name": "Production DB", 
+      "connection_name": "Production DB",
       "title": "Department Analysis",
       "is_active": true,
       "is_pinned": true,
@@ -94,24 +162,44 @@
       "updated_at": "2024-11-15T14:25:00Z"
     },
     {
-      "id": "msg-124", 
+      "id": "msg-124",
       "conversation_id": "conv-123",
       "content": "I'll analyze the top employees by salary for you.",
       "message_type": "assistant",
       "generated_sql": "SELECT TOP 10 EmployeeName, Department, Salary FROM Employees ORDER BY Salary DESC",
       "query_results": {
         "data": [
-          {"EmployeeName": "John Smith", "Department": "Engineering", "Salary": 95000},
-          {"EmployeeName": "Jane Doe", "Department": "Marketing", "Salary": 85000},
-          {"EmployeeName": "Bob Johnson", "Department": "Sales", "Salary": 75000}
+          {
+            "EmployeeName": "John Smith",
+            "Department": "Engineering",
+            "Salary": 95000
+          },
+          {
+            "EmployeeName": "Jane Doe",
+            "Department": "Marketing",
+            "Salary": 85000
+          },
+          {
+            "EmployeeName": "Bob Johnson",
+            "Department": "Sales",
+            "Salary": 75000
+          }
         ],
         "row_count": 10
       },
       "chart_data": {
         "type": "bar",
         "title": "Top Employees by Salary",
-        "data": [95000, 85000, 75000],
-        "labels": ["John Smith", "Jane Doe", "Bob Johnson"]
+        "data": [
+          95000,
+          85000,
+          75000
+        ],
+        "labels": [
+          "John Smith",
+          "Jane Doe",
+          "Bob Johnson"
+        ]
       },
       "summary": "John Smith leads with the highest salary at $95,000 in Engineering, followed by Jane Doe in Marketing at $85,000.",
       "execution_time": 245,

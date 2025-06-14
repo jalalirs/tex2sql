@@ -17,6 +17,7 @@ from app.core.sse_manager import sse_manager
 from app.utils.sse_utils import SSELogger
 from app.config import settings
 
+
 logger = logging.getLogger(__name__)
 
 class ConnectionService:
@@ -800,6 +801,8 @@ Key Guidelines:
             return False
     
     # Update the existing create_connection_for_user method to auto-refresh schema
+    # In app/services/connection_service.py, update the create_connection_for_user method:
+
     async def create_connection_for_user(
         self, 
         db: AsyncSession, 
@@ -868,17 +871,19 @@ Key Guidelines:
             
             await db.commit()
             
-            # Auto-refresh schema after creation
+            # AUTOMATICALLY GENERATE SCHEMA upon creation (NEW)
             try:
-                # Create a temporary task ID for schema refresh
                 temp_task_id = str(uuid.uuid4())
                 schema_result = await self.refresh_connection_schema(
                     connection_data, connection_id, temp_task_id
                 )
-                if not schema_result.success:
-                    logger.warning(f"Schema refresh failed during connection creation: {schema_result.error_message}")
+                if schema_result.success:
+                    logger.info(f"Auto-generated schema for new connection {connection_id}")
+                else:
+                    logger.warning(f"Schema auto-generation failed for new connection {connection_id}: {schema_result.error_message}")
             except Exception as e:
-                logger.warning(f"Auto schema refresh failed for new connection {connection_id}: {e}")
+                logger.warning(f"Auto schema generation failed for new connection {connection_id}: {e}")
+                # Don't fail connection creation if schema generation fails
             
             # Convert to response model
             return ConnectionResponse(
@@ -902,7 +907,6 @@ Key Guidelines:
             await db.rollback()
             logger.error(f"Failed to create connection for user {user.email}: {e}")
             raise
-
 
 # Global connection service instance
 connection_service = ConnectionService()

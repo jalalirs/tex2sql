@@ -443,3 +443,601 @@ src/
 
 ---
 
+
+I am currently implementing the front-end and here is my current tree
+
+tree src
+src
+├── App.tsx
+├── components
+│   ├── auth
+│   │   ├── Login.tsx
+│   │   └── Register.tsx
+│   ├── chat
+│   │   ├── ChatInput.tsx
+│   │   ├── ChatLayout.tsx
+│   │   ├── ChatMain.tsx
+│   │   ├── ChatMessages.tsx
+│   │   └── ChatSidebar.tsx
+│   ├── common
+│   ├── connection
+│   └── ui
+├── contexts
+│   └── AuthContext.tsx
+├── hooks
+├── index.css
+├── index.tsx
+├── services
+│   ├── auth.ts
+│   └── chat.ts
+├── types
+│   ├── auth.ts
+│   └── chat.ts
+└── utils
+
+11 directories, 15 files
+((.venv) ) 2025-06-14 12:33:40 ~/Documents/code/txt2sql/frontend $ tree mock-server/
+mock-server/
+├── db.json
+├── routes.json
+└── server.js
+
+0 directories, 3 files
+((.venv) ) 2025-06-14 12:33:48 ~/Documents/code/txt2sql/frontend $ tree public/
+public/
+└── index.html
+
+0 directories, 1 file
+((.venv) ) 2025-06-14 12:33:55 ~/Documents/code/txt2sql/frontend $ ls
+db.json      node_modules  package-lock.json  prompt.txt  README.md  tailwind.config.js
+mock-server  package.json  postcss.config.js  public      src        tsconfig.json
+
+
+In a previous conversation, I was implementing the following
+Chat Interface Implementation & Testing Plan
+Phase 1: Basic Chat UI
+Build:
+
+Chat layout (sidebar + main area)
+Message components (user/assistant bubbles)
+Input form
+Static conversation list
+
+Test:
+
+Visual layout works
+Messages display correctly
+Input field captures text
+Sidebar toggle works
+
+Phase 2: Mock Data Integration
+Build:
+
+Load mock conversations from db.json
+Display conversation history
+Show static messages when clicking conversations
+Add connection status indicators
+
+Test:
+
+Conversations load from mock server
+Switching between conversations works
+Connection status displays correctly
+
+Phase 3: Message Flow
+Build:
+
+Send message functionality
+Add user message to conversation
+Mock AI response with delay
+Display SQL/data/chart/summary components
+
+Test:
+
+Can send messages
+User messages appear immediately
+AI responses appear after delay
+All 4 response components render correctly
+
+Phase 4: Real-time Features
+Build:
+
+Loading states during "AI processing"
+Mock SSE streaming for responses
+Progressive response building (SQL → Data → Chart → Summary)
+
+Test:
+
+Loading indicators work
+Responses build progressively
+SSE simulation works
+
+Phase 5: Connection Integration
+Build:
+
+Connection selection modal
+"No connections" state
+Connection switching in sidebar
+
+Test:
+
+Can create/select connections
+Chat updates based on active connection
+Proper fallback when no connections exist
+
+I was at phase 4 and almost implemented everything except at the last thing, I lost the sql coloring. Here are the files I last change
+
+
+ChatMessages.tsx
+
+import React, { useRef, useEffect } from 'react';
+import { Database, Play, Loader2 } from 'lucide-react';
+
+interface ChatMessagesProps {
+  messages: any[];
+  loading: boolean;
+  activeConversation: string | null;
+}
+
+export const ChatMessages: React.FC<ChatMessagesProps> = ({ 
+  messages, 
+  loading, 
+  activeConversation 
+}) => {
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  };
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages]);
+
+  // Empty state when no conversation selected or no messages
+  if (!activeConversation || (messages.length === 0 && !loading)) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-8">
+        <div className="text-center max-w-md">
+          <Database size={48} className="mx-auto text-gray-400 mb-4" />
+          <h2 className="text-xl font-semibold text-gray-900 mb-2">
+            Ready to explore your data
+          </h2>
+          <p className="text-gray-600 mb-6">
+            Ask questions about your database in natural language. I'll generate SQL queries and show you the results.
+          </p>
+          <div className="grid gap-2 text-sm">
+            <button className="p-3 text-left border rounded-lg hover:bg-gray-50 transition-colors">
+              "Show me the top 10 customers by revenue"
+            </button>
+            <button className="p-3 text-left border rounded-lg hover:bg-gray-50 transition-colors">
+              "What were our sales trends last quarter?"
+            </button>
+            <button className="p-3 text-left border rounded-lg hover:bg-gray-50 transition-colors">
+              "Which products are most popular this month?"
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-4 space-y-6">
+      {messages.map(msg => (
+        <div key={msg.id} className={`flex gap-3 ${msg.type === 'user' ? 'justify-end' : ''}`}>
+          {msg.type === 'assistant' && (
+            <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
+              AI
+            </div>
+          )}
+          
+          <div className={`max-w-3xl ${
+            msg.type === 'user' 
+              ? 'bg-blue-600 text-white' 
+              : 'bg-white border'
+          } rounded-lg p-4`}>
+            <div className="prose prose-sm max-w-none">
+              <p>{msg.content}</p>
+              
+              {/* SQL Block */}
+              {msg.sql && (
+                <div className="mt-4 p-3 bg-gray-900 rounded-lg animate-fadeIn">
+                  <div className="flex items-center gap-2 text-gray-300 text-xs mb-2">
+                    <Play size={12} />
+                    Generated SQL
+                  </div>
+                  <pre className="text-green-400 text-sm overflow-x-auto whitespace-pre-wrap">
+                    <code>{msg.sql}</code>
+                  </pre>
+                </div>
+              )}
+              
+              {/* Data Table */}
+              {msg.data && (
+                <div className="mt-4 animate-fadeIn">
+                  <div className="text-sm font-medium text-gray-700 mb-2">
+                    Results ({msg.data.length} rows):
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full border border-gray-200 rounded-lg">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          {Object.keys(msg.data[0]).map(key => (
+                            <th key={key} className="px-4 py-2 text-left text-sm font-medium text-gray-700 border-b">
+                              {key}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {msg.data.map((row: any, idx: number) => (
+                          <tr key={idx} className="border-b">
+                            {Object.values(row).map((value: any, vidx: number) => (
+                              <td key={vidx} className="px-4 py-2 text-sm">
+                                {typeof value === 'number' && value > 100 
+                                  ? value.toLocaleString() 
+                                  : value}
+                              </td>
+                            ))}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+              
+              {/* Chart */}
+              {msg.chart && (
+                <div className="mt-4 animate-fadeIn">
+                  <div className="text-sm font-medium text-gray-700 mb-3">{msg.chart.title}:</div>
+                  <div className="bg-gray-50 border rounded-lg p-4">
+                    <div className="relative h-64">
+                      <svg viewBox="0 0 400 200" className="w-full h-full">
+                        {/* Chart background grid */}
+                        <defs>
+                          <pattern id="grid" width="40" height="20" patternUnits="userSpaceOnUse">
+                            <path d="M 40 0 L 0 0 0 20" fill="none" stroke="#e5e7eb" strokeWidth="1"/>
+                          </pattern>
+                        </defs>
+                        <rect width="400" height="200" fill="url(#grid)" />
+                        
+                        {/* Chart bars */}
+                        {msg.chart.data.map((value: number, idx: number) => {
+                          const maxValue = Math.max(...msg.chart.data);
+                          const barHeight = (value / maxValue) * 120;
+                          const x = 50 + (idx * 80);
+                          const y = 150 - barHeight;
+                          
+                          return (
+                            <g key={idx}>
+                              <rect
+                                x={x}
+                                y={y}
+                                width="60"
+                                height={barHeight}
+                                fill="#3b82f6"
+                                rx="2"
+                                className="animate-slideUp"
+                              />
+                              <text
+                                x={x + 30}
+                                y="170"
+                                textAnchor="middle"
+                                className="text-xs fill-gray-600"
+                              >
+                                {msg.chart.labels[idx]}
+                              </text>
+                              <text
+                                x={x + 30}
+                                y={y - 5}
+                                textAnchor="middle"
+                                className="text-xs fill-gray-700"
+                              >
+                                ${Math.round(value/1000)}K
+                              </text>
+                            </g>
+                          );
+                        })}
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Summary */}
+              {msg.summary && (
+                <div className="mt-4 animate-fadeIn">
+                  <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-6 h-6 bg-blue-600 rounded-full flex items-center justify-center animate-pulse">
+                        <span className="text-white text-xs font-bold">✨</span>
+                      </div>
+                      <div className="font-semibold text-blue-900">{msg.summary.title}</div>
+                    </div>
+                    <div className="space-y-2 mb-4">
+                      {msg.summary.insights.map((insight: string, idx: number) => (
+                        <div key={idx} className="text-sm text-blue-800 leading-relaxed animate-slideIn" style={{animationDelay: `${idx * 0.1}s`}}>
+                          {insight}
+                        </div>
+                      ))}
+                    </div>
+                    <div className="bg-blue-100 rounded-lg p-3 animate-slideIn" style={{animationDelay: '0.4s'}}>
+                      <div className="text-sm font-medium text-blue-900 mb-1">💡 Recommendation:</div>
+                      <div className="text-sm text-blue-800">{msg.summary.recommendation}</div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+          
+          {msg.type === 'user' && (
+            <div className="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
+              U
+            </div>
+          )}
+        </div>
+      ))}
+      
+      {/* Loading indicator with step-by-step progress */}
+      {loading && (
+        <div className="flex gap-3">
+          <div className="w-8 h-8 bg-blue-600 rounded-full flex items-center justify-center text-white text-sm font-medium">
+            AI
+          </div>
+          <div className="bg-white border rounded-lg p-4">
+            <div className="flex items-center gap-2 text-gray-600">
+              <div className="flex space-x-1">
+                <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce"></div>
+                <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                <div className="w-2 h-2 bg-blue-600 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+              </div>
+              <span>Thinking...</span>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      <div ref={messagesEndRef} />
+    </div>
+  );
+};
+
+index.css
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/* Add these animations to your existing src/index.css file */
+
+@keyframes fadeIn {
+  from { 
+    opacity: 0; 
+    transform: translateY(10px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: translateY(0); 
+  }
+}
+
+@keyframes slideIn {
+  from { 
+    opacity: 0; 
+    transform: translateX(-20px); 
+  }
+  to { 
+    opacity: 1; 
+    transform: translateX(0); 
+  }
+}
+
+@keyframes slideUp {
+  from { 
+    opacity: 0; 
+    transform: scaleY(0); 
+    transform-origin: bottom;
+  }
+  to { 
+    opacity: 1; 
+    transform: scaleY(1); 
+    transform-origin: bottom;
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.5s ease-out;
+}
+
+.animate-slideIn {
+  animation: slideIn 0.3s ease-out;
+}
+
+.animate-slideUp {
+  animation: slideUp 0.6s ease-out;
+}
+
+Also, here is my server for reference
+
+const jsonServer = require('json-server');
+const path = require('path');
+
+const server = jsonServer.create();
+const router = jsonServer.router(path.join(__dirname, 'db.json'));
+const middlewares = jsonServer.defaults();
+
+server.use(middlewares);
+server.use(jsonServer.bodyParser);
+
+// Auth endpoints
+server.post('/auth/login', (req, res) => {
+  const { email, password } = req.body;
+  
+  if (email === 'test@example.com' && password === 'Password123') {
+    const user = router.db.get('users').find({ email }).value();
+    const token = {
+      access_token: 'mock-access-token-123',
+      refresh_token: 'mock-refresh-token-123',
+      token_type: 'bearer',
+      expires_in: 3600
+    };
+    
+    res.json({
+      ...token,
+      user: user
+    });
+  } else {
+    res.status(401).json({ detail: 'Invalid credentials' });
+  }
+});
+
+server.get('/auth/me', (req, res) => {
+  const user = router.db.get('users').nth(0).value();
+  res.json(user);
+});
+
+server.post('/auth/logout', (req, res) => {
+  res.json({ message: 'Logged out successfully' });
+});
+
+// Data endpoints
+server.get('/connections', (req, res) => {
+  const connections = router.db.get('connections').value();
+  res.json(connections || []);
+});
+
+server.get('/conversations', (req, res) => {
+  const conversations = router.db.get('conversations').value();
+  res.json(conversations || []);
+});
+
+server.get('/conversations/:id', (req, res) => {
+  const conversation = router.db.get('conversations').find({ id: req.params.id }).value();
+  if (!conversation) {
+    return res.status(404).json({ detail: 'Conversation not found' });
+  }
+  
+  const messages = router.db.get('messages').filter({ conversation_id: req.params.id }).value();
+  res.json({ ...conversation, messages });
+});
+
+// Send message and create conversation if needed
+server.post('/conversations/query', (req, res) => {
+  const { question, conversation_id } = req.body;
+  let targetConversationId = conversation_id;
+  let isNewConversation = false;
+  
+  // Create new conversation if needed
+  if (!conversation_id || conversation_id === 'new') {
+    const newConversation = {
+      id: `conv-${Date.now()}`,
+      connection_id: 'conn-123',
+      connection_name: 'Production DB',
+      title: question.length > 50 ? question.substring(0, 50) + '...' : question,
+      description: null,
+      user_id: 'user-123',
+      is_active: true,
+      is_pinned: false,
+      connection_locked: true,
+      message_count: 2,
+      total_queries: 1,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      last_message_at: new Date().toISOString(),
+      latest_message: question
+    };
+    
+    router.db.get('conversations').push(newConversation).write();
+    targetConversationId = newConversation.id;
+    isNewConversation = true;
+  }
+  
+  // Save user message
+  const userMessage = {
+    id: `msg-user-${Date.now()}`,
+    conversation_id: targetConversationId,
+    content: question,
+    message_type: 'user',
+    is_edited: false,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+  router.db.get('messages').push(userMessage).write();
+  
+  // Save AI response immediately (simulating real-time processing)
+  const aiMessage = {
+    id: `msg-ai-${Date.now()}`,
+    conversation_id: targetConversationId,
+    content: "I'll help you with that query. Let me generate the SQL and fetch the results.",
+    message_type: 'assistant',
+    generated_sql: `SELECT TOP 10 ProductName, SUM(Quantity * UnitPrice) as Revenue
+FROM OrderDetails od
+JOIN Products p ON od.ProductID = p.ProductID
+WHERE OrderDate >= DATEADD(month, -1, GETDATE())
+GROUP BY ProductName
+ORDER BY Revenue DESC`,
+    query_results: {
+      data: [
+        { ProductName: "Chai", Revenue: 12485.50 },
+        { ProductName: "Chang", Revenue: 11438.25 },
+        { ProductName: "Aniseed Syrup", Revenue: 9567.00 },
+        { ProductName: "Guaraná Fantástica", Revenue: 8234.75 }
+      ],
+      row_count: 4
+    },
+    chart_data: {
+      type: 'bar',
+      title: 'Top Products by Revenue (Last Month)',
+      data: [12485.50, 11438.25, 9567.00, 8234.75],
+      labels: ['Chai', 'Chang', 'Aniseed Syrup', 'Guaraná Fantástica']
+    },
+    summary: "Chai remains the top-performing product with $12,485 in monthly revenue. Top 4 products show consistent performance across categories with strong international presence.",
+    execution_time: 245,
+    row_count: 4,
+    tokens_used: 156,
+    model_used: "gpt-4",
+    is_edited: false,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString()
+  };
+  router.db.get('messages').push(aiMessage).write();
+  
+  res.json({
+    session_id: `session-${Date.now()}`,
+    conversation_id: targetConversationId,
+    user_message_id: userMessage.id,
+    stream_url: `/events/stream/conversation/${targetConversationId}`,
+    is_new_conversation: isNewConversation,
+    connection_locked: true
+  });
+});
+
+server.listen(6020, () => {
+  console.log('Mock server running on http://localhost:6020');
+  const connections = router.db.get('connections').value();
+  const conversations = router.db.get('conversations').value();
+  const messages = router.db.get('messages').value();
+  console.log(`Loaded: ${connections?.length || 0} connections, ${conversations?.length || 0} conversations, ${messages?.length || 0} messages`);
+});
+
+Lets continue fix the coloring phase and then move to phase 5
+
+Rule of THUMB for this conversation:
+Follow my instructions and don't talk too much just be as direct as possible. Don't explain what you did unless it is very needed. Ask me to show you the content of files if you need to get some context
