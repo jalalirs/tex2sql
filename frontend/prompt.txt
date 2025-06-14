@@ -1,0 +1,445 @@
+# Tex2SQL Frontend Design Specification
+
+## Project Overview
+
+Tex2SQL is a FastAPI-based Text-to-SQL platform that allows users to connect to MS SQL Server databases, train AI models using Vanna AI + OpenAI, and query databases using natural language through a conversation-based interface with real-time Server-Sent Events (SSE).
+
+## Core System Architecture
+
+**Backend Stack:**
+- FastAPI with async/await
+- PostgreSQL with SQLAlchemy + Alembic migrations
+- AI: Vanna AI + OpenAI integration
+- Real-time: Server-Sent Events for long-running operations
+- Authentication: JWT-based user management
+- Storage: ChromaDB for vectors, PostgreSQL for metadata
+
+**User Workflow:**
+1. **Authentication** - Register/login with JWT tokens
+2. **Connection Management** - Create MS SQL Server connections (user-owned)
+3. **Testing & Training** - Test connection → Generate training data → Train AI model
+4. **Conversations** - Create conversations linked to trained connections
+5. **Querying** - Natural language → SQL → Data → Charts → Summaries
+6. **Real-time Updates** - SSE streams for all background operations
+
+## Frontend Requirements
+
+### Technology Stack
+- **Framework:** TypeScript + Node.js (React/Next.js recommended)
+- **State Management:** Context API or Redux Toolkit
+- **HTTP Client:** Axios with interceptors for auth
+- **Real-time:** EventSource for Server-Sent Events
+- **Charts:** Chart.js, Recharts, or Plotly.js
+- **UI Components:** Material-UI, Chakra UI, or custom component library
+- **Styling:** Tailwind CSS or styled-components
+
+### API Integration
+**Base URL:** `http://localhost:6020`
+**Authentication:** Bearer token in Authorization header
+**API Documentation:** [SWAGGER_PLACEHOLDER]
+**Type Definitions:** [SCHEMAS_PLACEHOLDER]
+
+---
+
+## Main Pages & Components
+
+### 1. Authentication Pages
+
+#### Login Page (`/login`)
+**Purpose:** User authentication
+**Features:**
+- Email/password login form
+- "Remember me" checkbox
+- "Forgot password" link
+- Registration redirect
+- Error handling for invalid credentials
+
+**Components:**
+- `LoginForm` - Form with validation
+- `AuthError` - Display authentication errors
+- `LoadingSpinner` - During login process
+
+#### Register Page (`/register`)
+**Purpose:** New user registration
+**Features:**
+- Registration form (username, email, password, full name, company, job title)
+- Password strength indicator
+- Terms of service acceptance
+- Email verification flow
+- Redirect to login after successful registration
+
+**Components:**
+- `RegisterForm` - Multi-step registration form
+- `PasswordStrength` - Visual password strength indicator
+- `FieldValidation` - Real-time field validation
+
+### 2. Dashboard/Home Page (`/dashboard`)
+
+**Purpose:** Main landing page after login
+**Features:**
+- Quick stats overview (connections, conversations, queries)
+- Recent activity feed
+- Quick actions (create connection, start conversation)
+- Connection status indicators
+- Recent conversations list
+
+**Components:**
+- `DashboardStats` - Key metrics cards
+- `QuickActions` - Action buttons grid
+- `RecentActivity` - Activity timeline
+- `ConnectionStatusGrid` - Visual connection health indicators
+
+### 3. Connection Management
+
+#### Connections List Page (`/connections`)
+**Purpose:** View and manage all database connections
+**Features:**
+- Connection cards with status indicators
+- Filter/search connections
+- Connection actions (edit, delete, test, train)
+- Create new connection button
+- Status badges (testing, trained, failed, etc.)
+
+**Components:**
+- `ConnectionCard` - Individual connection display
+- `ConnectionFilters` - Search and filter controls
+- `StatusBadge` - Visual status indicators
+- `ConnectionActions` - Action dropdown menu
+
+#### Create/Edit Connection Page (`/connections/new`, `/connections/:id/edit`)
+**Purpose:** Create or modify database connections
+**Features:**
+- Multi-step form (connection details, test, column descriptions, training)
+- Real-time connection testing with SSE progress
+- Column description upload (CSV)
+- Training data generation with progress tracking
+- Model training with SSE updates
+
+**Components:**
+- `ConnectionForm` - Multi-step form wizard
+- `ConnectionTest` - Live connection testing with progress
+- `ColumnUpload` - CSV file upload and preview
+- `TrainingProgress` - Real-time training progress with SSE
+- `StepNavigator` - Form step indicator
+
+**SSE Integration:**
+- Connection test progress
+- Training data generation progress
+- Model training progress
+
+### 4. Conversation Interface
+
+#### Conversations List Page (`/conversations`)
+**Purpose:** View all user conversations
+**Features:**
+- Conversation list with preview
+- Filter by connection
+- Conversation metadata (message count, last activity)
+- Create new conversation
+- Pin/unpin conversations
+
+**Components:**
+- `ConversationList` - Scrollable conversation list
+- `ConversationPreview` - Individual conversation card
+- `ConversationFilters` - Filter and search controls
+- `NewConversationModal` - Connection selection modal
+
+#### Chat Interface (`/conversations/:id`)
+**Purpose:** Main query interface with natural language processing
+**Features:**
+- Chat-style message interface
+- Natural language query input
+- Real-time query processing with SSE
+- SQL display with syntax highlighting
+- Data table results
+- Interactive charts (when generated)
+- AI-generated summaries
+- Follow-up question suggestions
+- Export results (CSV, JSON)
+- Query history within conversation
+
+**Components:**
+- `ChatContainer` - Main chat layout
+- `MessageList` - Scrollable message history
+- `QueryInput` - Natural language input with suggestions
+- `QueryProgress` - Real-time query processing indicator
+- `SQLDisplay` - Syntax-highlighted SQL code
+- `DataTable` - Sortable, filterable results table
+- `ChartViewer` - Interactive chart display
+- `SummaryCard` - AI-generated insights
+- `FollowUpQuestions` - Clickable question suggestions
+- `ExportMenu` - Data export options
+
+**SSE Integration:**
+- Query processing progress
+- SQL generation updates
+- Data retrieval progress
+- Chart generation status
+- Summary generation progress
+
+### 5. Training Management
+
+#### Training Dashboard (`/training`)
+**Purpose:** Monitor and manage AI model training
+**Features:**
+- Training task history
+- Connection training status
+- Training analytics
+- Re-training options
+- Training data preview
+
+**Components:**
+- `TrainingTaskList` - Historical training tasks
+- `TrainingAnalytics` - Training performance metrics
+- `TrainingDataPreview` - Generated examples preview
+- `RetrainModal` - Re-training confirmation dialog
+
+#### Training Data Viewer (`/training/:connectionId/data`)
+**Purpose:** View and edit training examples
+**Features:**
+- Generated question-SQL pairs
+- Edit training examples
+- Add custom examples
+- Delete poor examples
+- Training data statistics
+
+**Components:**
+- `TrainingExampleList` - Paginated examples list
+- `ExampleEditor` - Edit question/SQL pairs
+- `ExampleValidator` - SQL validation feedback
+- `TrainingStats` - Data quality metrics
+
+### 6. User Profile & Settings
+
+#### Profile Page (`/profile`)
+**Purpose:** User account management
+**Features:**
+- Profile information editing
+- Password change
+- Preferences settings
+- Usage statistics
+- Session management
+
+**Components:**
+- `ProfileForm` - User information editor
+- `PasswordChangeForm` - Secure password update
+- `PreferencesPanel` - User preferences
+- `UsageStats` - Personal analytics
+- `SessionManager` - Active sessions list
+
+---
+
+## Shared Components & Utilities
+
+### Core Components
+- `Layout` - Main app layout with navigation
+- `NavBar` - Top navigation with user menu
+- `SideBar` - Side navigation for main sections
+- `LoadingSpinner` - Consistent loading states
+- `ErrorBoundary` - Error handling wrapper
+- `Toast` - Notification system
+- `Modal` - Reusable modal component
+- `ConfirmDialog` - Confirmation dialogs
+- `ProgressBar` - Progress indicators
+
+### Data Components
+- `DataTable` - Sortable, filterable, paginated table
+- `SearchBox` - Universal search component
+- `FilterPanel` - Advanced filtering interface
+- `ExportButton` - Data export functionality
+- `Pagination` - Consistent pagination
+- `EmptyState` - No data placeholder
+
+### Real-time Components
+- `SSEConnection` - Server-Sent Events handler
+- `ProgressTracker` - Real-time progress display
+- `StatusIndicator` - Live status updates
+- `EventLog` - Real-time event display
+
+### Form Components
+- `FormField` - Consistent form inputs
+- `FormValidation` - Field validation display
+- `FormWizard` - Multi-step form handler
+- `FileUpload` - File upload with preview
+- `AutoComplete` - Searchable dropdown
+- `CodeEditor` - SQL code editing
+
+---
+
+## State Management Structure
+
+### Global State
+```typescript
+interface AppState {
+  auth: {
+    user: User | null;
+    token: string | null;
+    isAuthenticated: boolean;
+    loading: boolean;
+  };
+  connections: {
+    list: Connection[];
+    current: Connection | null;
+    loading: boolean;
+    filters: ConnectionFilters;
+  };
+  conversations: {
+    list: Conversation[];
+    current: Conversation | null;
+    messages: Message[];
+    loading: boolean;
+  };
+  training: {
+    tasks: TrainingTask[];
+    currentProgress: TrainingProgress | null;
+  };
+  ui: {
+    sidebarOpen: boolean;
+    theme: 'light' | 'dark';
+    notifications: Notification[];
+  };
+}
+```
+
+### Local Component State
+- Form data and validation states
+- Modal open/close states
+- Loading states for specific operations
+- Temporary UI states (expanded panels, selected items)
+
+---
+
+## Real-time Features (SSE Integration)
+
+### SSE Event Types
+- `connected` - Connection established
+- `progress` - Operation progress updates
+- `log` - Detailed operation logs
+- `completed` - Operation completed successfully
+- `error` - Operation failed
+- `heartbeat` - Keep-alive messages
+
+### SSE Handlers
+```typescript
+interface SSEHandlers {
+  onConnectionTest: (progress: ProgressEvent) => void;
+  onDataGeneration: (progress: TrainingProgress) => void;
+  onModelTraining: (progress: TrainingProgress) => void;
+  onQueryProcessing: (progress: QueryProgress) => void;
+  onError: (error: ErrorEvent) => void;
+}
+```
+
+---
+
+## Security Considerations
+
+### Authentication
+- JWT token storage (httpOnly cookies recommended)
+- Token refresh mechanism
+- Automatic logout on token expiration
+- Session management
+
+### API Security
+- Request/response interceptors
+- CSRF protection
+- Input validation and sanitization
+- Error message sanitization
+
+### Data Protection
+- Sensitive data masking in UI
+- Secure password handling
+- Connection credential encryption display
+- User data privacy controls
+
+---
+
+## Performance Optimizations
+
+### Code Splitting
+- Route-based code splitting
+- Component lazy loading
+- Dynamic imports for heavy libraries
+
+### Data Optimization
+- React Query or SWR for caching
+- Pagination for large datasets
+- Virtual scrolling for large lists
+- Debounced search inputs
+
+### Real-time Optimization
+- SSE connection pooling
+- Event batching and throttling
+- Memory leak prevention
+- Connection error recovery
+
+---
+
+## Responsive Design Requirements
+
+### Breakpoints
+- Mobile: 320px - 768px
+- Tablet: 768px - 1024px
+- Desktop: 1024px+
+
+### Mobile Considerations
+- Touch-friendly interface
+- Collapsible navigation
+- Responsive data tables
+- Mobile-optimized modals
+- Gesture support for charts
+
+---
+
+## Development Guidelines
+
+### Code Organization
+```
+src/
+├── components/           # Reusable components
+├── pages/               # Page components
+├── hooks/               # Custom React hooks
+├── services/            # API services
+├── utils/               # Utility functions
+├── types/               # TypeScript type definitions
+├── store/               # State management
+├── styles/              # Global styles
+└── assets/              # Static assets
+```
+
+### Testing Strategy
+- Unit tests for utilities and hooks
+- Integration tests for API services
+- Component testing with React Testing Library
+- E2E tests for critical user flows
+- SSE connection testing
+
+### Error Handling
+- Global error boundary
+- API error interceptors
+- User-friendly error messages
+- Error logging and reporting
+- Fallback UI components
+
+---
+
+## Future Enhancements
+
+### Planned Features
+- Multi-database support (PostgreSQL, MySQL)
+- Collaboration features (shared connections)
+- Advanced analytics dashboard
+- Query performance monitoring
+- AI model fine-tuning interface
+- Export to BI tools
+- Query scheduling and automation
+
+### Scalability Considerations
+- Microservice architecture support
+- CDN integration for assets
+- Progressive Web App (PWA) features
+- Offline capability for cached data
+- Multi-tenant architecture support
+
+---
+
