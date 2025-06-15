@@ -1,0 +1,13 @@
+# docker-compose.override.yml - Use this *only* for local development.
+# It overrides docker-compose.yml to build images from local source.
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile

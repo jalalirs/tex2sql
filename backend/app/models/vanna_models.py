@@ -29,14 +29,17 @@ class DatabaseConfig(BaseModel):
         # Use the driver field, fallback to default if None/empty
         driver_name = self.driver if self.driver and self.driver.strip() else "ODBC Driver 17 for SQL Server"
         
-        return (
+        connection_string =  (
             f"DRIVER={{{driver_name}}};"
             f"SERVER={self.server};"
             f"DATABASE={self.database_name};"
             f"UID={self.username};"
             f"PWD={self.password};"
             f"TrustServerCertificate=yes;"
+            f"Encrypt=no;"  
         )
+        print(connection_string)
+        return connection_string
 
 class ColumnInfo(BaseModel):
     """Column information from database schema analysis"""
