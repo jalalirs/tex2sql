@@ -4,6 +4,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional, List
 import uuid
 import logging
+import asyncio
 
 from app.dependencies import get_db, get_current_active_user, validate_api_key
 from app.services.connection_service import connection_service
@@ -641,9 +642,7 @@ async def generate_training_data(
             detail=f"Failed to start data generation: {str(e)}"
         )
 
-# In app/api/training.py, replace the train_model function with this fixed version:
-
-@router.post("{connection_id}/train", response_model=TaskResponse)
+@router.post("/{connection_id}/train", response_model=TaskResponse)
 async def train_model(
     connection_id: str,
     background_tasks: BackgroundTasks,
@@ -757,7 +756,7 @@ async def _run_data_generation(
     num_examples: int, 
     task_id: str,
     user: User,
-    db: AsyncSession
+    db: AsyncSession # db is an AsyncSession
 ):
     """Background task for data generation"""
     sse_logger = SSELogger(sse_manager, task_id, "data_generation")
@@ -772,12 +771,15 @@ async def _run_data_generation(
             "task_id": task_id
         })
         
-        # Run data generation
+        # Run data generation (this is where the core logic is in training_service)
+        # Ensure training_service.generate_training_data handles its own internal commits for progress
+        # but the final status update/commit for the task should be handled here.
         result = await training_service.generate_training_data(
             db, user, connection_id, num_examples, task_id
         )
                 
         if result.success:
+            # All successful steps should be within the try block
             await _update_task_status(db, task_id, "completed", 100)
             await sse_manager.send_to_task(task_id, "data_generation_completed", {
                 "success": True,
@@ -787,8 +789,10 @@ async def _run_data_generation(
                 "user_id": str(user.id),
                 "task_id": task_id
             })
+            await asyncio.sleep(0.01) # ADD THIS LINE: Small delay to ensure event is sent
             await sse_logger.info("Data generation completed successfully")
         else:
+            # If training_service.generate_training_data reports failure, handle it gracefully
             await _update_task_status(db, task_id, "failed", 0, result.error_message)
             await sse_manager.send_to_task(task_id, "data_generation_error", {
                 "success": False,
@@ -797,20 +801,41 @@ async def _run_data_generation(
                 "user_id": str(user.id),
                 "task_id": task_id
             })
+            await asyncio.sleep(0.01)
             await sse_logger.error(f"Data generation failed: {result.error_message}")
             
     except Exception as e:
+        # This catch-all block is crucial for ensuring the SSE stream is properly closed
+        # with an explicit error message if something unexpected happens.
         error_msg = f"Data generation task failed: {str(e)}"
-        logger.error(error_msg)
-        await _update_task_status(db, task_id, "failed", 0, error_msg)
-        await sse_manager.send_to_task(task_id, "data_generation_error", {
-            "success": False,
-            "error": error_msg,
-            "connection_id": connection_id,
-            "user_id": str(user.id),
-            "task_id": task_id
-        })
-        await sse_logger.error(error_msg)
+        logger.error(error_msg, exc_info=True) # Log full traceback
+        
+        # Ensure task status is updated to failed, even if session is in a bad state
+        try:
+            await _update_task_status(db, task_id, "failed", 0, error_msg)
+        except Exception as update_err:
+            logger.error(f"Failed to update task status to failed after error: {update_err}")
+
+        # Try to send an error event. This might fail if connection is already closed.
+        try:
+            await sse_manager.send_to_task(task_id, "data_generation_error", {
+                "success": False,
+                "error": error_msg,
+                "connection_id": connection_id,
+                "user_id": str(user.id),
+                "task_id": task_id
+            })
+            await asyncio.sleep(0.01)
+        except Exception as sse_err:
+            logger.error(f"Failed to send SSE error event: {sse_err}")
+
+        # IMPORTANT: Rollback the session if an error occurred to release locks
+        try:
+            await db.rollback()
+        except Exception as rollback_err:
+            logger.error(f"Failed to rollback DB session: {rollback_err}")
+
+
 
 async def _run_model_training(
     connection_id: str, 
@@ -862,7 +887,7 @@ async def _run_model_training(
         
         # Train model
         vanna_instance = await vanna_service.setup_and_train_vanna(
-            connection_id, db_config, vanna_config, retrain=True, progress_callback=progress_callback
+            connection_id, db_config, vanna_config, retrain=True, progress_callback=progress_callback, user=user
         )
         
         if vanna_instance:

@@ -164,29 +164,31 @@ class SSEManager:
         
         sent_count = 0
         failed_connections = []
-        connections_to_close = []
+        # connections_to_close = [] # REMOVE THIS LIST - it's no longer needed for immediate active state change
         
         for connection_id in self.task_connections[task_id].copy():
             success = await self.send_to_connection(connection_id, event_type, data)
             if success:
                 sent_count += 1
                 
-                # Check if this is a completion event - if so, mark connection for closure
-                if event_type in ["test_completed", "training_completed", "data_generation_completed", "completed", "error"]:
-                    connections_to_close.append(connection_id)
+                # Check if this is a completion event - if so, the generator in get_event_stream will handle the break
+                # REMOVE THE FOLLOWING BLOCK:
+                # if event_type in ["test_completed", "training_completed", "data_generation_completed", "completed", "error"]:
+                #     connections_to_close.append(connection_id)
                     
             else:
                 failed_connections.append(connection_id)
         
-        # Clean up failed connections
+        # Clean up failed connections (this part is still correct)
         for connection_id in failed_connections:
             await self.unsubscribe_from_task(connection_id, task_id)
         
+        # REMOVE THIS BLOCK:
         # Close connections that received completion events
-        for connection_id in connections_to_close:
-            if connection_id in self.connections:
-                self.connections[connection_id].is_active = False
-                logger.debug(f"Marked connection {connection_id} for closure after completion event")
+        # for connection_id in connections_to_close:
+        #     if connection_id in self.connections:
+        #         self.connections[connection_id].is_active = False
+        #         logger.debug(f"Marked connection {connection_id} for closure after completion event")
         
         logger.debug(f"Sent event '{event_type}' to {sent_count} connections for task {task_id}")
         return sent_count
@@ -336,20 +338,33 @@ class SSEManager:
     
     async def send_completion_and_close(self, task_id: str, event_type: str, data: Dict[str, Any]) -> int:
         """Send completion event and close all connections for the task"""
+        # This method is primarily for tasks that *initiate* the completion/error closure,
+        # ensuring the final event is sent and then connections are cleaned up.
+        # The `get_event_stream` generator's internal break is the primary mechanism.
+
         sent_count = await self.send_to_task(task_id, event_type, data)
         
-        # Give a small delay to ensure the event is sent before closing
-        await asyncio.sleep(0.1)
+        # Give a small delay to ensure the event is sent before the task potentially finishes.
+        # This is still good practice to ensure the underlying ASGI server flushes.
+        await asyncio.sleep(0.1) 
         
-        # Close all connections for this task
+        # The `_disconnect` will eventually be called when the `get_event_stream` generator
+        # breaks its loop and the `finally` block executes.
+        # We can explicitly force disconnect here for robustness, but the generator loop
+        # and `_disconnect` from its `finally` should be sufficient.
+        # Consider making this block optional or ensuring it doesn't race with the generator's cleanup.
+        # For simplicity and to prevent racing: if this method is called, it means the task is done.
+        # Let's ensure explicit cleanup here just in case, but after the sleep.
+        
         if task_id in self.task_connections:
             connections_to_close = list(self.task_connections[task_id])
             for connection_id in connections_to_close:
-                await self._disconnect(connection_id)
+                # Call _disconnect to properly clean up and remove from self.connections/task_connections
+                await self._disconnect(connection_id) 
                 logger.debug(f"Closed connection {connection_id} after task {task_id} completion")
         
         return sent_count
-    
+        
     def get_connection_count(self) -> int:
         """Get total number of active connections"""
         return len(self.connections)

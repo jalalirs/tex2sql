@@ -58,7 +58,7 @@ class TrainingService:
     
     async def generate_training_data(
         self, 
-        db: AsyncSession, 
+        db: AsyncSession, # Passed from connections.py background task
         user: User,
         connection_id: str, 
         num_examples: int,
@@ -67,6 +67,11 @@ class TrainingService:
         """Generate training data for a user's connection"""
         sse_logger = SSELogger(sse_manager, task_id, "data_generation")
         
+        # NOTE: This top-level try-except block is CRITICAL.
+        # It ensures that even if something within _analyze_database_schema,
+        # _generate_examples_with_llm, _save_training_examples, _create_training_documentation,
+        # or _save_training_data_file fails, the final connection status and SSE error
+        # are handled.
         try:
             await sse_logger.info(f"Starting data generation for user {user.email}, connection {connection_id}")
             await sse_logger.progress(5, "Verifying connection ownership...")
@@ -86,6 +91,8 @@ class TrainingService:
                 raise ValueError(f"Access denied: Connection does not belong to user {user.email}")
             
             # Update connection status
+            # Important: Ensure this commit is separate or that the entire operation uses one transaction.
+            # For now, let's assume `_update_connection_status` handles its own commit.
             await self._update_connection_status(db, connection_id, ConnectionStatus.GENERATING_DATA)
             
             await sse_logger.progress(10, "Analyzing database schema...")
@@ -112,7 +119,14 @@ class TrainingService:
             
             await sse_logger.progress(80, "Saving generated examples...")
             
-            # Save examples to database
+            # Save examples to database - This part should be transactional with the connection status update
+            # Suggestion: Perform a single `db.commit()` at the very end of generate_training_data
+            # if `_save_training_examples` doesn't commit, and then change _save_training_examples
+            # to not commit internally.
+            
+            # For now, assuming _save_training_examples and _update_connection_status commit,
+            # ensure no unhandled exceptions between these and the final return/send_to_task.
+            
             await self._save_training_examples(db, connection_id, generated_examples, user)
             
             # Create documentation
@@ -130,24 +144,14 @@ class TrainingService:
             
             await self._save_training_data_file(connection_id, training_data, user)
             
-            # Update connection status
+            # Update connection status to DATA_GENERATED, this is the final DB commit for the success path
             await self._update_connection_status(db, connection_id, ConnectionStatus.DATA_GENERATED)
             
             await sse_logger.progress(100, f"Generated {len(generated_examples)} examples successfully")
             await sse_logger.info(f"Data generation completed for user {user.email}")
             
-            # Send completion event with user context
-            await sse_manager.send_to_task(task_id, "data_generation_completed", {
-                "success": True,
-                "total_generated": len(generated_examples),
-                "failed_count": num_examples - len(generated_examples),
-                "connection_id": connection_id,
-                "connection_name": connection.name,
-                "user_id": str(user.id),
-                "user_email": user.email,
-                "task_id": task_id
-            })
-            
+            # The SSE completion event is sent by `_run_data_generation` in `connections.py`
+            # This service function *returns* the result, which is then used by the caller
             return GeneratedDataResult(
                 success=True,
                 total_generated=len(generated_examples),
@@ -158,23 +162,25 @@ class TrainingService:
             )
             
         except Exception as e:
-            error_msg = f"Data generation failed for user {user.email}: {str(e)}"
-            logger.error(error_msg)
-            await sse_logger.error(error_msg)
+            # This outer exception handler is crucial for catching any error
+            # that might prevent the task from completing successfully.
+            error_msg = f"Data generation failed for user {user.email}, connection {connection_id}: {str(e)}"
+            logger.error(error_msg, exc_info=True) # Log full traceback
             
-            # Update connection status back to test success
-            await self._update_connection_status(db, connection_id, ConnectionStatus.TEST_SUCCESS)
-            
-            # Send error event with user context
-            await sse_manager.send_to_task(task_id, "data_generation_error", {
-                "success": False,
-                "error": error_msg,
-                "connection_id": connection_id,
-                "user_id": str(user.id),
-                "user_email": user.email,
-                "task_id": task_id
-            })
-            
+            # Update connection status back to test success (or failed if more appropriate)
+            # Ensure this is robust against further errors.
+            try:
+                await self._update_connection_status(db, connection_id, ConnectionStatus.TEST_SUCCESS)
+            except Exception as status_update_err:
+                logger.error(f"Failed to update connection status to TEST_SUCCESS after generation error: {status_update_err}")
+
+            # Rollback any pending transactions for this session if not already committed
+            try:
+                await db.rollback()
+            except Exception as rollback_err:
+                logger.error(f"Failed to rollback DB session in generate_training_data: {rollback_err}")
+
+            # Return a failed result
             return GeneratedDataResult(
                 success=False,
                 total_generated=0,

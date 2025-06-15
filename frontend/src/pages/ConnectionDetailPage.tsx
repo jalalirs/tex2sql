@@ -4,7 +4,9 @@ import { ArrowLeft, Database, CheckCircle, AlertCircle, Clock, Zap, Play, Upload
 import { Connection } from '../types/chat';
 import { chatService } from '../services/chat';
 import { sseConnection } from '../services/sse';
+import { trainingService } from '../services/training';
 import { api } from '../services/auth';
+
 
 
 
@@ -130,7 +132,7 @@ export const ConnectionDetailPage: React.FC = () => {
       case 'column-descriptions':
         return <ColumnDescriptionsTab connection={connection} onConnectionUpdate={setConnection} />;
       case 'training-data':
-        return <TrainingDataTab connection={connection} />;
+        return <TrainingDataTab connection={connection} onConnectionUpdate={setConnection} />; // ADDED PROP
       case 'training':
         return <TrainingTab connection={connection} onConnectionUpdate={setConnection} />;
       default:
@@ -1074,22 +1076,24 @@ const SchemaTab: React.FC<{ connection: Connection }> = ({ connection }) => {
 };
 
 // Training Data Tab Component
-// Updated Training Data Tab Component - replace the existing TrainingDataTab
-
 // Updated Training Data Tab Component - replace in ConnectionDetailPage.tsx
 
-const TrainingDataTab: React.FC<{ connection: Connection }> = ({ connection }) => {
+const TrainingDataTab: React.FC<{ connection: Connection; onConnectionUpdate: (connection: Connection) => void }> = ({ connection, onConnectionUpdate }) => { // ADDED PROP
   const [trainingData, setTrainingData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [numExamples, setNumExamples] = useState(20);
+  const [numExamples, setNumExamples] = useState(5);
   const [liveExamples, setLiveExamples] = useState<any[]>([]);
   const [generationProgress, setGenerationProgress] = useState({ current: 0, total: 0 });
 
 
   useEffect(() => {
     loadTrainingData();
+    // Cleanup function to close SSE connection when component unmounts
+    return () => {
+      sseConnection.close();
+    };
   }, [connection.id, connection.generated_examples_count]);
 
   const loadTrainingData = async () => {
@@ -1111,43 +1115,43 @@ const TrainingDataTab: React.FC<{ connection: Connection }> = ({ connection }) =
   };
 
 
-  const generateExamples = async () => {
-    setGenerating(true);
-    setError(null);
-    setTrainingData(null);
-    setLiveExamples([]);
-    setGenerationProgress({ current: 0, total: numExamples });
+
+  // FIXED generateExamples function for TrainingDataTab (Real Backend)
+
+const generateExamples = async () => {
+  setGenerating(true);
+  setError(null);
+  setTrainingData(null);
+  setLiveExamples([]);
+  setGenerationProgress({ current: 0, total: numExamples });
+  
+  try {
+    console.log('🚀 Starting data generation for', numExamples, 'examples');
     
-    // Add flag to track if completion was received
-    let completionReceived = false;
-    
-    try {
-      const response = await api.post(`/connections/${connection.id}/generate-data`, {
-        num_examples: numExamples
-      });
-  
-      const result = response.data;
-  
-      if (result.stream_url) {
-        const fullStreamUrl = result.stream_url.startsWith('http') 
-          ? result.stream_url 
-          : `http://localhost:6020${result.stream_url}`;
-        
-        const eventSource = new EventSource(fullStreamUrl);
-        
-        // Handle completion event FIRST
-        eventSource.addEventListener('data_generation_completed', (event: any) => {
-          console.log('✅ Data generation completed:', event.data);
-          completionReceived = true; // Mark completion as received
-          setGenerating(false);
-          loadTrainingData();
-          eventSource.close();
-        });
-  
-        // Handle individual examples
-        eventSource.addEventListener('example_generated', (event: any) => {
-          try {
-            const data = JSON.parse(event.data);
+    const response = await api.post(`/connections/${connection.id}/generate-data`, {
+      num_examples: numExamples
+    });
+
+    const result = response.data;
+    console.log('📡 Backend response:', result);
+
+    if (result.stream_url) {
+      // Backend returns relative URL, construct full URL
+      const fullStreamUrl = result.stream_url.startsWith('http') 
+        ? result.stream_url 
+        : `http://localhost:6020${result.stream_url}`;
+      
+      console.log('🔗 Connecting to SSE stream:', fullStreamUrl);
+      
+      // Use the SSE service with proper handlers
+      sseConnection.connect(fullStreamUrl, {
+        onCustomEvent: (eventType, data) => {
+          console.log('🎯 Custom event:', eventType, data);
+          
+          if (eventType === 'data_generation_started') {
+            console.log('🚀 Data generation started:', data);
+          } else if (eventType === 'example_generated') {
+            console.log('📝 Example generated:', data);
             setLiveExamples(prev => [...prev, {
               id: `live-${data.example_number}`,
               question: data.question,
@@ -1155,41 +1159,49 @@ const TrainingDataTab: React.FC<{ connection: Connection }> = ({ connection }) =
               example_number: data.example_number
             }]);
             setGenerationProgress(prev => ({ ...prev, current: data.example_number }));
-          } catch (e) {
-            console.error('Error parsing example:', e);
+          } else if (eventType === 'info') {
+            console.log('ℹ️ Info:', data);
           }
-        });
-  
-        // Handle connection errors/closure
-        eventSource.onerror = (error) => {
-          console.error('❌ SSE connection error:', error);
-          
-          // If completion was already received, this is just normal connection closure
-          if (completionReceived) {
-            console.log('✅ Connection closed after completion - this is normal');
-            return;
+        },
+        
+        onProgress: (data) => {
+          console.log('📊 Generation progress:', data);
+          if (data.progress !== undefined) {
+            setGenerationProgress(prev => ({ ...prev, current: data.progress * numExamples / 100 }));
           }
-          
-          // If we have all examples but no completion event, treat as success
-          if (liveExamples.length === numExamples) {
-            console.log('✅ All examples received, treating closure as success');
-            setGenerating(false);
+        },
+        
+        onCompleted: (data) => {
+          console.log('✅ Data generation completed:', data);
+          setGenerating(false);
+          // Update connection status
+          onConnectionUpdate({ 
+            ...connection,
+            status: 'data_generated',
+            generated_examples_count: data.total_generated
+          });
+          // Reload training data to show the generated examples
+          setTimeout(() => {
             loadTrainingData();
-          } else {
-            setError('Connection error - please try again');
-            setGenerating(false);
-          }
-          
-          eventSource.close();
-        };
-      }
-      
-    } catch (err: any) {
-      console.error('Data generation failed:', err);
-      setError(err.response?.data?.detail || err.message);
-      setGenerating(false);
+          }, 1000);
+        },
+        
+        onError: (data) => {
+          console.error('❌ Data generation failed:', data);
+          setError(data.error || data.message || 'Generation failed');
+          setGenerating(false);
+        }
+      }, 120000); // 2 minute timeout for real backend
+    } else {
+      throw new Error('No stream URL provided by backend');
     }
-  };
+    
+  } catch (err: any) {
+    console.error('Failed to start data generation:', err);
+    setError(err.response?.data?.detail || err.message);
+    setGenerating(false);
+  }
+};
 
   if (loading) {
     return (
@@ -1327,6 +1339,7 @@ const TrainingDataTab: React.FC<{ connection: Connection }> = ({ connection }) =
                     className="px-2 py-1 border border-gray-300 rounded text-sm"
                     disabled={generating}
                   >
+                    <option value={5}>5</option>
                     <option value={10}>10</option>
                     <option value={20}>20</option>
                     <option value={30}>30</option>
@@ -1376,7 +1389,7 @@ const TrainingDataTab: React.FC<{ connection: Connection }> = ({ connection }) =
         ) : !generating && (
           <div className="text-center py-8">
             <Play size={48} className="mx-auto text-gray-400 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900 mb-2">No Training Data</h3>
+            <h3 className="lg font-medium text-gray-900 mb-2">No Training Data</h3>
             <p className="text-gray-600 mb-4">
               Generate training examples to prepare your AI model for natural language queries.
             </p>
@@ -1387,111 +1400,127 @@ const TrainingDataTab: React.FC<{ connection: Connection }> = ({ connection }) =
   );
 };
 
-// Updated Training Tab Component - replace in ConnectionDetailPage.tsx
-
-// Fixed Training Tab Component - replace the existing TrainingTab
-
 const TrainingTab: React.FC<{ connection: Connection; onConnectionUpdate: (connection: Connection) => void }> = ({ connection, onConnectionUpdate }) => {
   const [training, setTraining] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-
+  const [trainingProgress, setTrainingProgress] = useState(0);
+  const [trainingPhase, setTrainingPhase] = useState<string>('');
 
   const handleStartTraining = async () => {
     setTraining(true);
     setError(null);
+    setTrainingProgress(0);
+    setTrainingPhase('');
     
     try {
-      const response = await fetch(`http://localhost:6020/connections/${connection.id}/train`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        }
-      });
+      console.log('🚀 Starting model training for connection:', connection.id);
+      
+      // Call the real backend training endpoint
+      const result = await trainingService.trainModel(connection.id);
+      console.log('📡 Training task started:', result);
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to start training');
-      }
-
-      const result = await response.json();
-      console.log('Training started:', result);
-
-      // Connect to SSE stream if available
+      // Connect to SSE stream for real-time updates
       if (result.stream_url) {
-        sseConnection.connect(result.stream_url, {
+        const fullStreamUrl = result.stream_url.startsWith('http') 
+          ? result.stream_url 
+          : `http://localhost:6020${result.stream_url}`;
+        
+        console.log('🔗 Connecting to training SSE stream:', fullStreamUrl);
+        
+        sseConnection.connect(fullStreamUrl, {
           onProgress: (data) => {
-            console.log('Training progress:', data);
-            // Could show progress percentage here
+            console.log('📊 Training progress:', data);
+            if (data.progress !== undefined) {
+              setTrainingProgress(data.progress);
+            }
+            if (data.message) {
+              setTrainingPhase(data.message);
+            }
           },
           
           onCustomEvent: (eventType, data) => {
+            console.log('🎯 Training event:', eventType, data);
+            
             if (eventType === 'training_started') {
-              console.log('Training started:', data);
+              console.log('🚀 Training started:', data);
+              setTrainingPhase('Training started...');
+            } else if (eventType === 'training_completed') {
+              console.log('✅ Training completed via custom event:', data);
+              setTraining(false);
+              setTrainingProgress(100);
+              setTrainingPhase('Training completed successfully!');
+              
+              // Update connection status in the UI
+              onConnectionUpdate({
+                ...connection,
+                status: 'trained',
+                trained_at: new Date().toISOString()
+              });
+              
+              // Clear progress after a moment
+              setTimeout(() => {
+                setTrainingProgress(0);
+                setTrainingPhase('');
+              }, 3000);
+            } else if (eventType === 'training_error') {
+              console.error('❌ Training error event:', data);
+              const errorMessage = data.error || data.message || 'Training failed';
+              setError(errorMessage);
+              setTraining(false);
+              setTrainingProgress(0);
+              setTrainingPhase('');
+            } else if (eventType === 'info' || eventType === 'log') {
+              console.log('ℹ️ Training info:', data);
+              if (data.message) {
+                setTrainingPhase(data.message);
+              }
             }
           },
           
           onCompleted: async (data) => {
-            console.log('Training completed:', data);
+            console.log('✅ Training completed via onCompleted:', data);
             setTraining(false);
+            setTrainingProgress(100);
+            setTrainingPhase('Training completed successfully!');
             
-            // Update connection status
-            try {
-              const connResponse = await fetch(`http://localhost:6020/connections/${connection.id}`);
-              if (connResponse.ok) {
-                const connData = await connResponse.json();
-                onConnectionUpdate(connData);
-              }
-            } catch (e) {
-              console.error('Failed to update connection:', e);
-            }
+            // Update connection status in the UI
+            onConnectionUpdate({
+              ...connection,
+              status: 'trained',
+              trained_at: new Date().toISOString()
+            });
+            
+            // Clear progress after a moment
+            setTimeout(() => {
+              setTrainingProgress(0);
+              setTrainingPhase('');
+            }, 3000);
           },
           
           onError: (data) => {
-            console.error('Training failed:', data);
-            setError(data.error || 'Training failed');
+            console.error('❌ Training failed:', data);
+            const errorMessage = data.error || data.message || 'Training failed';
+            console.error('Error details:', errorMessage);
+            setError(errorMessage);
             setTraining(false);
+            setTrainingProgress(0);
+            setTrainingPhase('');
           }
-        });
+        }, 600000); // 10 minute timeout for training
       } else {
-        // Fallback: Poll for completion if no SSE
-        const pollForCompletion = async () => {
-          let attempts = 0;
-          const maxAttempts = 30;
-          
-          while (attempts < maxAttempts) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            try {
-              const connResponse = await fetch(`http://localhost:6020/connections/${connection.id}`);
-              if (connResponse.ok) {
-                const connData = await connResponse.json();
-                if (connData.status === 'trained') {
-                  onConnectionUpdate(connData);
-                  setTraining(false);
-                  return;
-                }
-              }
-            } catch (e) {
-              // Continue polling
-            }
-            
-            attempts++;
-          }
-          
-          throw new Error('Training timed out');
-        };
-
-        await pollForCompletion();
+        throw new Error('No stream URL provided by backend');
       }
       
     } catch (err: any) {
-      console.error('Training failed:', err);
-      setError(err.message);
+      console.error('Failed to start training:', err);
+      setError(err.response?.data?.detail || err.message);
       setTraining(false);
+      setTrainingProgress(0);
+      setTrainingPhase('');
     }
   };
-  // Fixed logic: Can train with test_success status (no data generation required)
+
+  // Can train with test_success status (no data generation required)
   const canTrain = ['test_success', 'data_generated'].includes(connection.status) || connection.status === 'trained';
 
   return (
@@ -1575,7 +1604,7 @@ const TrainingTab: React.FC<{ connection: Connection; onConnectionUpdate: (conne
               disabled={training}
               className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
             >
-              {training ? 'Training...' : 'Start Training'}
+              {training ? 'Starting Training...' : 'Start Training'}
             </button>
           </div>
         ) : (
@@ -1584,6 +1613,9 @@ const TrainingTab: React.FC<{ connection: Connection; onConnectionUpdate: (conne
             <h3 className="text-lg font-medium text-gray-900 mb-2">Training Not Available</h3>
             <p className="text-gray-600 mb-4">
               Connection must be successfully tested before training can begin.
+            </p>
+            <p className="text-sm text-gray-500">
+              Current status: <span className="font-medium">{connection.status}</span>
             </p>
           </div>
         )}
@@ -1594,10 +1626,24 @@ const TrainingTab: React.FC<{ connection: Connection; onConnectionUpdate: (conne
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
               <span className="font-medium">Training in progress...</span>
             </div>
+            
+            {/* Progress Bar */}
+            {trainingProgress > 0 && (
+              <div className="mb-3">
+                <div className="w-full bg-blue-200 rounded-full h-2">
+                  <div 
+                    className="bg-blue-600 h-2 rounded-full transition-all duration-500" 
+                    style={{ width: `${trainingProgress}%` }}
+                  ></div>
+                </div>
+                <div className="text-right text-xs text-blue-600 mt-1">
+                  {trainingProgress}%
+                </div>
+              </div>
+            )}
+            
             <p className="text-blue-700 text-sm">
-              The model is learning your database structure
-              {connection.generated_examples_count > 0 ? ' and training examples' : ''}
-              . This may take a few minutes.
+              {trainingPhase || `The model is learning your database structure${connection.generated_examples_count > 0 ? ' and training examples' : ''}. This may take a few minutes.`}
             </p>
           </div>
         )}
