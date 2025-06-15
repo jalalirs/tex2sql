@@ -1,7 +1,7 @@
 import axios from 'axios';
 import { LoginRequest, RegisterRequest, TokenResponse } from '../types/auth';
 
-const API_BASE_URL = 'http://localhost:6020';
+const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:6020';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
