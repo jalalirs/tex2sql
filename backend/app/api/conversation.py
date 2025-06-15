@@ -116,6 +116,27 @@ async def process_conversation_query(
             detail=f"Failed to process query: {str(e)}"
         )
 
+@router.get("/", response_model=list[ConversationResponse])
+async def get_user_conversations(
+    connection_id: Optional[str] = None,
+    current_user: User = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """Get user's conversations"""
+    try:
+        conversations = await conversation_service.get_user_conversations(
+            current_user, db, connection_id
+        )
+        
+        return conversations
+        
+    except Exception as e:
+        logger.error(f"Failed to get conversations: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get conversations: {str(e)}"
+        )
+
 
 @router.post("/query", response_model=ConversationQueryResponse)
 async def process_query_new_conversation(

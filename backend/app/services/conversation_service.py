@@ -733,6 +733,55 @@ class ConversationService:
         logger.info(f"Listed {len(conversations)} conversations for user {user.email}")
         return list(conversations)
     
+    async def get_user_conversations(
+        self,
+        user: User,
+        db: AsyncSession,
+        connection_id: Optional[str] = None
+    ) -> List[ConversationResponse]:
+        """Get user's conversations formatted for API response"""
+        
+        # Get conversations using existing method
+        conversations = await self.list_user_conversations(
+            user, db, connection_id, limit=100
+        )
+        
+        # Format for API response
+        result = []
+        for conv in conversations:
+            # Get connection name
+            connection_result = await db.execute(
+                select(Connection.name).where(Connection.id == conv.connection_id)
+            )
+            connection_name = connection_result.scalar() or "Unknown Connection"
+            
+            # Get latest message
+            latest_message_result = await db.execute(
+                select(Message.content).where(
+                    Message.conversation_id == conv.id
+                ).order_by(desc(Message.created_at)).limit(1)
+            )
+            latest_message = latest_message_result.scalar()
+            
+            result.append(ConversationResponse(
+                id=str(conv.id),
+                connection_id=str(conv.connection_id),
+                connection_name=connection_name,
+                title=conv.title,
+                description=conv.description,
+                is_active=conv.is_active,
+                is_pinned=conv.is_pinned,
+                connection_locked=conv.connection_locked,
+                message_count=conv.message_count,
+                total_queries=conv.total_queries,
+                created_at=conv.created_at,
+                updated_at=conv.updated_at,
+                last_message_at=conv.last_message_at,
+                latest_message=latest_message
+            ))
+        
+        return result
+
     async def delete_conversation(
         self,
         user: User,

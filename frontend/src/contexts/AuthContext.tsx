@@ -60,6 +60,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     dispatch({ type: 'SET_LOADING', payload: true });
     try {
       const response = await authService.login(data);
+      console.log('🔍 Login response:', response); // Add this debug line
+      console.log('🔍 Access token:', response.access_token); // And this one
       localStorage.setItem('access_token', response.access_token);
       localStorage.setItem('refresh_token', response.refresh_token);
       dispatch({ type: 'AUTH_SUCCESS', payload: { user: response.user, token: response.access_token } });

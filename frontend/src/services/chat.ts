@@ -3,7 +3,7 @@ import { Connection, Conversation } from '../types/chat';
 
 export const chatService = {
   // Get user's connections (determined by token)
-  async getConnections(): Promise<Connection[]> {
+  async getConnections(): Promise<{connections: Connection[], total: number}> {
     const response = await api.get('/connections');
     return response.data;
   },

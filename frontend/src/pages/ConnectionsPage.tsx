@@ -18,15 +18,29 @@ export const ConnectionsPage: React.FC = () => {
 
   const loadConnections = async () => {
     try {
-      const connectionsData = await chatService.getConnections();
-      setConnections(connectionsData);
+      console.log('Loading connections...');
+      const connectionsData: any = await chatService.getConnections();
+      console.log('Connections data:', connectionsData);
+      
+      // Handle the backend response format: {connections: [...], total: number}
+      let connections: Connection[] = []; // Add explicit type here
+      if (connectionsData && Array.isArray(connectionsData.connections)) {
+        connections = connectionsData.connections;
+      } else if (Array.isArray(connectionsData)) {
+        connections = connectionsData;
+      } else {
+        console.error('Unexpected connections data format:', connectionsData);
+        connections = []; // Ensure it's always an array
+      }
+      
+      setConnections(connections);
     } catch (error) {
       console.error('Failed to load connections:', error);
+      setConnections([]);
     } finally {
       setLoading(false);
     }
   };
-
   const getStatusInfo = (status: string) => {
     switch (status) {
       case 'trained':

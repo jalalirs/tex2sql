@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import { RegisterRequest } from '../../types/auth';
+import { useNavigate } from 'react-router-dom'; // Add this import
+
 
 interface RegisterProps {
   onSwitchToLogin: () => void;
@@ -8,13 +10,14 @@ interface RegisterProps {
 
 export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
   const { register, loading } = useAuth();
+  const navigate = useNavigate(); // Add this line
   const [formData, setFormData] = useState<RegisterRequest>({
-    email: '',
-    username: '',
-    full_name: '',
-    password: '',
-    company: '',
-    job_title: '',
+    email: 'test@example.com',
+    username: 'test',
+    full_name: 'Test User',
+    password: 'Password123',
+    company: 'Test Company',
+    job_title: 'Developer',
   });
   const [error, setError] = useState('');
   const [passwordStrength, setPasswordStrength] = useState({
@@ -54,6 +57,11 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
     setPasswordStrength({ score, feedback });
   };
 
+  // Initialize password strength on component mount
+  React.useEffect(() => {
+    checkPasswordStrength(formData.password);
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -65,6 +73,7 @@ export const Register: React.FC<RegisterProps> = ({ onSwitchToLogin }) => {
 
     try {
       await register(formData);
+      navigate('/'); // Add this line to redirect after successful registration
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Registration failed');
     }

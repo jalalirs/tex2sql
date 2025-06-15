@@ -18,7 +18,18 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
-
+// Request interceptor to add auth token
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('access_token');
+  console.log('🔍 Interceptor - URL:', config.url, 'Token exists:', !!token);
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+    console.log('✅ Authorization header set');
+  } else {
+    console.log('❌ No token found in interceptor');
+  }
+  return config;
+});
 // Response interceptor for token refresh
 api.interceptors.response.use(
   (response) => response,

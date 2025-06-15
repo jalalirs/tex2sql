@@ -5,6 +5,8 @@ from sqlalchemy import select
 from typing import AsyncGenerator, Optional
 import logging
 import jwt
+from jwt import PyJWTError as JWTError
+
 from datetime import datetime, timezone
 
 from app.core.database import get_async_db
@@ -59,7 +61,7 @@ async def get_current_user_optional(
             
     except jwt.ExpiredSignatureError:
         return None
-    except jwt.JWTError:
+    except JWTError:
         return None
     
     # Get user from database
@@ -135,7 +137,7 @@ async def get_current_user(
             detail="Token has expired",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    except jwt.JWTError:
+    except JWTError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid authentication credentials",

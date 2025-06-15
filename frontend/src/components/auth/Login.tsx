@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom'; // Add this import
 import { useAuth } from '../../contexts/AuthContext';
 import { LoginRequest } from '../../types/auth';
 
@@ -8,6 +9,7 @@ interface LoginProps {
 
 export const Login: React.FC<LoginProps> = ({ onSwitchToRegister }) => {
   const { login, loading } = useAuth();
+  const navigate = useNavigate(); // Add this line
   const [formData, setFormData] = useState<LoginRequest>({
     email: 'test@example.com',
     password: 'Password123',
@@ -20,6 +22,7 @@ export const Login: React.FC<LoginProps> = ({ onSwitchToRegister }) => {
 
     try {
       await login(formData);
+      navigate('/'); // Add this line to redirect after successful login
     } catch (err: any) {
       setError(err.response?.data?.detail || 'Login failed');
     }

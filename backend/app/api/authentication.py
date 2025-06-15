@@ -21,11 +21,11 @@ security = HTTPBearer()
 
 @router.post(
     "/register",
-    response_model=UserResponse,
+    response_model=TokenResponse,  # Change from UserResponse to TokenResponse
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_user_registration_enabled)],
     summary="Register new user",
-    description="Register a new user account"
+    description="Register a new user account and return tokens"
 )
 async def register(
     user_data: UserCreate,
@@ -40,21 +40,13 @@ async def register(
         ip_address = request.client.host if request.client else None
         logger.info(f"User registered: {user.email} from {ip_address}")
         
-        return UserResponse(
-            id=str(user.id),
-            email=user.email,
-            username=user.username,
-            full_name=user.full_name,
-            role=user.role,
-            is_active=user.is_active,
-            is_verified=user.is_verified,
-            profile_picture_url=user.profile_picture_url,
-            bio=user.bio,
-            company=user.company,
-            job_title=user.job_title,
-            created_at=user.created_at,
-            last_login_at=user.last_login_at
+        # Auto-login: Create session and return tokens
+        user_agent = request.headers.get("user-agent", "")
+        token_response = await auth_service.create_user_session(
+            user, db, ip_address, user_agent
         )
+        
+        return token_response
         
     except HTTPException:
         raise

@@ -4,6 +4,9 @@ import { ArrowLeft, Database, CheckCircle, AlertCircle, Clock, Zap, Play, Upload
 import { Connection } from '../types/chat';
 import { chatService } from '../services/chat';
 import { sseConnection } from '../services/sse';
+import { api } from '../services/auth';
+
+
 
 
 
@@ -19,6 +22,7 @@ export const ConnectionDetailPage: React.FC = () => {
   const [connection, setConnection] = useState<Connection | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
 
   useEffect(() => {
     console.log('ConnectionDetailPage mounted, ID:', id);
@@ -48,21 +52,13 @@ export const ConnectionDetailPage: React.FC = () => {
   const loadConnection = async () => {
     try {
       console.log('Loading connection with ID:', id);
-      const response = await fetch(`http://localhost:6020/connections/${id}`);
-      console.log('Response status:', response.status);
+      const response = await api.get(`/connections/${id}`); // Use api instead of fetch
+      console.log('Response data:', response.data);
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Error response:', errorText);
-        throw new Error('Connection not found');
-      }
-      
-      const connectionData = await response.json();
-      console.log('Connection data loaded:', connectionData);
-      setConnection(connectionData);
+      setConnection(response.data);
     } catch (err: any) {
       console.error('Failed to load connection:', err);
-      setError(err.message);
+      setError(err.response?.data?.detail || err.message);
     } finally {
       setLoading(false);
     }
@@ -811,43 +807,30 @@ const SchemaTab: React.FC<{ connection: Connection }> = ({ connection }) => {
   const loadSchema = async () => {
     try {
       setError(null);
-      const response = await fetch(`http://localhost:6020/connections/${connection.id}/schema`);
+      const response = await api.get(`/connections/${connection.id}/schema`); // Use api instead of fetch
       
-      if (!response.ok) {
-        if (response.status === 404) {
-          setError('Schema not found. Click "Refresh Schema" to analyze the database structure.');
-        } else {
-          throw new Error('Failed to load schema');
-        }
-        setSchemaData(null);
-      } else {
-        const data = await response.json();
-        setSchemaData(data);
-      }
+      setSchemaData(response.data);
     } catch (err: any) {
       console.error('Failed to load schema:', err);
-      setError(err.message);
+      if (err.response?.status === 404) {
+        setError('Schema not found. Click "Refresh Schema" to analyze the database structure.');
+      } else {
+        setError(err.response?.data?.detail || err.message);
+      }
       setSchemaData(null);
     } finally {
       setLoading(false);
     }
   };
-
+  
   const refreshSchema = async () => {
     setRefreshing(true);
     setError(null);
     
     try {
-      const response = await fetch(`http://localhost:6020/connections/${connection.id}/refresh-schema`, {
-        method: 'POST'
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to refresh schema');
-      }
-
-      const result = await response.json();
+      const response = await api.post(`/connections/${connection.id}/refresh-schema`); // Use api instead of fetch
+      
+      const result = response.data;
       console.log('Schema refresh started:', result);
       
       // Poll for completion (in a real app, you'd use SSE)
@@ -859,13 +842,10 @@ const SchemaTab: React.FC<{ connection: Connection }> = ({ connection }) => {
           await new Promise(resolve => setTimeout(resolve, 1000));
           
           try {
-            const schemaResponse = await fetch(`http://localhost:6020/connections/${connection.id}/schema`);
-            if (schemaResponse.ok) {
-              const data = await schemaResponse.json();
-              setSchemaData(data);
-              setRefreshing(false);
-              return;
-            }
+            const schemaResponse = await api.get(`/connections/${connection.id}/schema`); // Use api instead of fetch
+            setSchemaData(schemaResponse.data);
+            setRefreshing(false);
+            return;
           } catch (e) {
             // Continue polling
           }
@@ -875,12 +855,12 @@ const SchemaTab: React.FC<{ connection: Connection }> = ({ connection }) => {
         
         throw new Error('Schema refresh timed out');
       };
-
+  
       await pollForCompletion();
       
     } catch (err: any) {
       console.error('Schema refresh failed:', err);
-      setError(err.message);
+      setError(err.response?.data?.detail || err.message);
       setRefreshing(false);
     }
   };
@@ -1104,6 +1084,9 @@ const TrainingDataTab: React.FC<{ connection: Connection }> = ({ connection }) =
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [numExamples, setNumExamples] = useState(20);
+  const [liveExamples, setLiveExamples] = useState<any[]>([]);
+  const [generationProgress, setGenerationProgress] = useState({ current: 0, total: 0 });
+
 
   useEffect(() => {
     loadTrainingData();
@@ -1112,19 +1095,16 @@ const TrainingDataTab: React.FC<{ connection: Connection }> = ({ connection }) =
   const loadTrainingData = async () => {
     try {
       setError(null);
-      const response = await fetch(`http://localhost:6020/connections/${connection.id}/training-data`);
+      const response = await api.get(`/connections/${connection.id}/training-data`); // Use api instead of fetch
       
-      if (response.ok) {
-        const data = await response.json();
-        setTrainingData(data);
-      } else if (response.status === 404) {
-        setTrainingData(null);
-      } else {
-        throw new Error('Failed to load training data');
-      }
+      setTrainingData(response.data);
     } catch (err: any) {
       console.error('Failed to load training data:', err);
-      setError(err.message);
+      if (err.response?.status === 404) {
+        setTrainingData(null);
+      } else {
+        setError(err.response?.data?.detail || err.message);
+      }
     } finally {
       setLoading(false);
     }
@@ -1134,97 +1114,79 @@ const TrainingDataTab: React.FC<{ connection: Connection }> = ({ connection }) =
   const generateExamples = async () => {
     setGenerating(true);
     setError(null);
+    setTrainingData(null);
+    setLiveExamples([]);
+    setGenerationProgress({ current: 0, total: numExamples });
+    
+    // Add flag to track if completion was received
+    let completionReceived = false;
     
     try {
-      const response = await fetch(`http://localhost:6020/connections/${connection.id}/generate-training-data`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify({
-          num_examples: numExamples
-        })
+      const response = await api.post(`/connections/${connection.id}/generate-data`, {
+        num_examples: numExamples
       });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.detail || 'Failed to start data generation');
-      }
-
-      const result = await response.json();
-      console.log('Data generation started:', result);
-
-      // Connect to SSE stream if available
+  
+      const result = response.data;
+  
       if (result.stream_url) {
-        sseConnection.connect(result.stream_url, {
-          onProgress: (data) => {
-            console.log('Generation progress:', data);
-            // Could show progress bar here
-          },
-          
-          onCustomEvent: (eventType, data) => {
-            if (eventType === 'data_generation_started') {
-              console.log('Generation started:', data);
-            } else if (eventType === 'example_generated') {
-              console.log('New example generated:', data);
-              // Could show real-time examples being generated
-            }
-          },
-          
-          onCompleted: async (data) => {
-            console.log('Generation completed:', data);
-            setGenerating(false);
-            await loadTrainingData();
-          },
-          
-          onError: (data) => {
-            console.error('Generation failed:', data);
-            setError(data.error || 'Data generation failed');
-            setGenerating(false);
+        const fullStreamUrl = result.stream_url.startsWith('http') 
+          ? result.stream_url 
+          : `http://localhost:6020${result.stream_url}`;
+        
+        const eventSource = new EventSource(fullStreamUrl);
+        
+        // Handle completion event FIRST
+        eventSource.addEventListener('data_generation_completed', (event: any) => {
+          console.log('✅ Data generation completed:', event.data);
+          completionReceived = true; // Mark completion as received
+          setGenerating(false);
+          loadTrainingData();
+          eventSource.close();
+        });
+  
+        // Handle individual examples
+        eventSource.addEventListener('example_generated', (event: any) => {
+          try {
+            const data = JSON.parse(event.data);
+            setLiveExamples(prev => [...prev, {
+              id: `live-${data.example_number}`,
+              question: data.question,
+              sql: data.sql,
+              example_number: data.example_number
+            }]);
+            setGenerationProgress(prev => ({ ...prev, current: data.example_number }));
+          } catch (e) {
+            console.error('Error parsing example:', e);
           }
         });
-      } else {
-        // Fallback: Poll for completion if no SSE
-        const pollForCompletion = async () => {
-          let attempts = 0;
-          const maxAttempts = 30;
+  
+        // Handle connection errors/closure
+        eventSource.onerror = (error) => {
+          console.error('❌ SSE connection error:', error);
           
-          while (attempts < maxAttempts) {
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            try {
-              const trainingResponse = await fetch(`http://localhost:6020/connections/${connection.id}/training-data`);
-              if (trainingResponse.ok) {
-                await loadTrainingData();
-                setGenerating(false);
-                return;
-              }
-              
-              const connResponse = await fetch(`http://localhost:6020/connections/${connection.id}`);
-              if (connResponse.ok) {
-                const connData = await connResponse.json();
-                if (connData.status === 'data_generated' && connData.generated_examples_count > 0) {
-                  await loadTrainingData();
-                  setGenerating(false);
-                  return;
-                }
-              }
-            } catch (e) {
-              console.log('Polling attempt failed, continuing...', e);
-            }
-            
-            attempts++;
+          // If completion was already received, this is just normal connection closure
+          if (completionReceived) {
+            console.log('✅ Connection closed after completion - this is normal');
+            return;
           }
           
-          throw new Error('Data generation timed out');
+          // If we have all examples but no completion event, treat as success
+          if (liveExamples.length === numExamples) {
+            console.log('✅ All examples received, treating closure as success');
+            setGenerating(false);
+            loadTrainingData();
+          } else {
+            setError('Connection error - please try again');
+            setGenerating(false);
+          }
+          
+          eventSource.close();
         };
-
-        await pollForCompletion();
       }
       
     } catch (err: any) {
       console.error('Data generation failed:', err);
-      setError(err.message);
+      setError(err.response?.data?.detail || err.message);
       setGenerating(false);
     }
   };
@@ -1263,6 +1225,7 @@ const TrainingDataTab: React.FC<{ connection: Connection }> = ({ connection }) =
                   className="px-2 py-1 border border-gray-300 rounded text-sm"
                   disabled={generating}
                 >
+                  <option value={5}>5</option>
                   <option value={10}>10</option>
                   <option value={20}>20</option>
                   <option value={30}>30</option>
@@ -1280,7 +1243,7 @@ const TrainingDataTab: React.FC<{ connection: Connection }> = ({ connection }) =
             </div>
           )}
         </div>
-
+  
         {error && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg">
             <div className="flex items-center gap-2 text-red-800">
@@ -1290,19 +1253,42 @@ const TrainingDataTab: React.FC<{ connection: Connection }> = ({ connection }) =
             <p className="text-red-700 text-sm mt-1">{error}</p>
           </div>
         )}
-
+  
+        {/* Single progress indicator - moved below button */}
         {generating && (
           <div className="mb-6 bg-blue-50 border border-blue-200 rounded-lg p-4">
             <div className="flex items-center gap-2 text-blue-800 mb-2">
               <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-              <span className="font-medium">Generating training examples...</span>
+              <span className="font-medium">Generating examples... ({generationProgress.current}/{generationProgress.total})</span>
             </div>
-            <p className="text-blue-700 text-sm">
-              Creating {numExamples} question-SQL pairs based on your database schema. This may take a few minutes.
-            </p>
+            
+            {/* Progress bar */}
+            <div className="w-full bg-blue-200 rounded-full h-2 mb-4">
+              <div 
+                className="bg-blue-600 h-2 rounded-full transition-all duration-300" 
+                style={{ width: `${(generationProgress.current / generationProgress.total) * 100}%` }}
+              ></div>
+            </div>
+  
+            {/* Show live examples as they're generated */}
+            {liveExamples.length > 0 && (
+              <div className="space-y-2 max-h-60 overflow-y-auto">
+                <h4 className="text-sm font-medium text-blue-800">Generated Examples:</h4>
+                {liveExamples.map((example, index) => (
+                  <div key={example.id} className="bg-white p-3 rounded border text-sm">
+                    <div className="font-medium text-gray-900 mb-1">
+                      Q{example.example_number}: {example.question}
+                    </div>
+                    <div className="text-gray-600 font-mono text-xs bg-gray-50 p-2 rounded">
+                      {example.sql}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
-
+  
         {trainingData ? (
           <div className="space-y-6">
             {/* Training Data Summary */}
@@ -1326,7 +1312,7 @@ const TrainingDataTab: React.FC<{ connection: Connection }> = ({ connection }) =
                 <div className="text-sm text-purple-700">Model Status</div>
               </div>
             </div>
-
+  
             {/* Regenerate Button */}
             <div className="flex justify-between items-center">
               <h3 className="text-md font-medium text-gray-900">
@@ -1357,7 +1343,7 @@ const TrainingDataTab: React.FC<{ connection: Connection }> = ({ connection }) =
                 </button>
               </div>
             </div>
-
+  
             {/* Examples List */}
             <div className="space-y-4">
               {trainingData.generated_examples.map((example: any, index: number) => (

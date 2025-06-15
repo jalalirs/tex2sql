@@ -398,8 +398,7 @@ class TrainingDataView(BaseModel):
     total_examples: int = 0
 
 class GenerateExamplesRequest(BaseModel):
-    connection_id: str = Field(..., description="Connection UUID")
-    num_examples: int = Field(default=20, ge=1, le=100, description="Number of examples to generate")
+    num_examples: int = Field(default=20, ge=1, le=100, description="Number of training examples to generate")
 
 class TrainingExampleResponse(BaseModel):
     id: str
